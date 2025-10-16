@@ -19,15 +19,14 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
-import kotlin.jvm.JvmStatic
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.jvm.JvmStatic
 
 class GNSSClientService : Service() {
 
@@ -47,10 +46,12 @@ class GNSSClientService : Service() {
     private var headingDegrees: Double? = null
 
     private val serviceScope = CoroutineScope(Dispatchers.Default)
-    private var fusedClient: FusedLocationProviderClient? = null
     private var mockEnabled = false
-    private val providerNames =
+    private val providerCandidates =
         listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+    private val registeredProviders = mutableSetOf<String>()
+    @Volatile
+    private var testProvidersConfigured = false
     private val bleLock = Any()
 
     companion object {
@@ -349,11 +350,12 @@ class GNSSClientService : Service() {
 
         runCatching {
             val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            ensureTestProviders(manager)
-            if (fusedClient == null) {
-                fusedClient = LocationServices.getFusedLocationProviderClient(this)
-                runCatching { fusedClient?.setMockMode(true) }
+            val providersReady = ensureTestProviders(manager)
+            if (!providersReady) {
+                Log.w(tag, "Test providers not configured, skipping mock location push")
+                return@runCatching
             }
+            ensureTestProvidersActive(manager)
             pushLocation(manager, lat, lon)
         }
     }
@@ -413,9 +415,201 @@ class GNSSClientService : Service() {
         return fine || coarse
     }
 
-    private fun ensureTestProviders(locationManager: LocationManager) {
-        providerNames.forEach { provider ->
-            runCatching { locationManager.removeTestProvider(provider) }
+    private fun ensureTestProviders(locationManager: LocationManager): Boolean {
+        if (testProvidersConfigured) return true
+
+        var anyConfigured = false
+        providerCandidates.forEach { provider ->
+            if (registeredProviders.contains(provider)) {
+                anyConfigured = true
+            } else if (registerTestProvider(locationManager, provider)) {
+                anyConfigured = true
+            }
+        }
+        testProvidersConfigured = anyConfigured
+        return anyConfigured
+    }
+
+    private fun ensureTestProvidersActive(locationManager: LocationManager): Boolean {
+        var anyEnabled = false
+        val currentProviders = registeredProviders.toList()
+        currentProviders.forEach { provider ->
+            var enabled = false
+            repeat(2) { attempt ->
+                val result =
+                    runCatching { locationManager.setTestProviderEnabled(provider, true) }
+                if (result.isSuccess) {
+                    Log.d(tag, "Test provider $provider confirmed active")
+                    enabled = true
+                    return@repeat
+                }
+                val error = result.exceptionOrNull()
+                if (error is IllegalArgumentException &&
+                    error.message?.contains("not a test provider", true) == true &&
+                    attempt == 0
+                ) {
+                    Log.w(
+                        tag,
+                        "Test provider $provider lost mock status, attempting re-registration"
+                    )
+                    if (!registerTestProvider(locationManager, provider)) {
+                        registeredProviders.remove(provider)
+                        testProvidersConfigured = registeredProviders.isNotEmpty()
+                        return@repeat
+                    }
+                } else {
+                    Log.w(tag, "Failed to ensure test provider $provider active", error)
+                    return@repeat
+                }
+            }
+            anyEnabled = anyEnabled || enabled
+        }
+        testProvidersConfigured = registeredProviders.isNotEmpty()
+        return anyEnabled
+    }
+
+    private fun disableTestProviders(locationManager: LocationManager) {
+        registeredProviders.forEach { provider ->
+            runCatching {
+                locationManager.setTestProviderEnabled(provider, false)
+                Log.i(tag, "Disabled test provider $provider")
+            }
+            runCatching {
+                locationManager.removeTestProvider(provider)
+                Log.i(tag, "Removed test provider $provider")
+            }
+        }
+        registeredProviders.clear()
+        testProvidersConfigured = false
+    }
+
+    private fun startMocking() {
+        if (mockEnabled) return
+        if (!hasMockLocationPermission()) {
+            mockEnabled = false
+            sendMockStatus(false, null, null, "Нет разрешений на локацию")
+            return
+        }
+        val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val providersReady = ensureTestProviders(manager)
+        val providersActive = ensureTestProvidersActive(manager)
+        if (!providersReady || !providersActive) {
+            mockEnabled = false
+            sendMockStatus(false, null, null, "Не назначен mock-провайдер")
+            return
+        }
+        mockEnabled = true
+        sendMockStatus(true, null, null, null)
+    }
+
+    private fun stopMocking() {
+        mockEnabled = false
+        val manager = runCatching {
+            getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        }.getOrNull()
+        if (manager != null) {
+            disableTestProviders(manager)
+        }
+        sendMockStatus(false, null, null, null)
+    }
+
+    private fun pushLocation(locationManager: LocationManager, lat: Double, lon: Double) {
+        try {
+            val timestamp = System.currentTimeMillis()
+            val elapsedNanos =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+                    SystemClock.elapsedRealtimeNanos()
+                } else {
+                    0L
+                }
+            val latFormatted = String.format(Locale.US, "%.6f", lat)
+            val lonFormatted = String.format(Locale.US, "%.6f", lon)
+            val providersToUse = registeredProviders.toList()
+            if (providersToUse.isEmpty()) {
+                Log.w(tag, "No registered test providers available for location push")
+            }
+            providersToUse.forEach { provider ->
+                val location = Location(provider).apply {
+                    latitude = lat
+                    longitude = lon
+                    accuracy = 3.0f
+                    altitudeMeters?.let { altitude = it }
+                    speedMetersPerSecond?.let { speed = it.toFloat() }
+                    headingDegrees?.let { bearing = it.toFloat() }
+                    time = timestamp
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+                        elapsedRealtimeNanos = elapsedNanos
+                    }
+                }
+                pushLocationToProvider(
+                    locationManager = locationManager,
+                    provider = provider,
+                    location = location,
+                    latFormatted = latFormatted,
+                    lonFormatted = lonFormatted
+                )
+            }
+            Log.i(tag, "Maps link: https://maps.google.com/?q=$latFormatted,$lonFormatted")
+            val latitude = if (mockEnabled) lat else null
+            val longitude = if (mockEnabled) lon else null
+            sendMockStatus(mockEnabled, latitude, longitude, null)
+        } catch (exception: SecurityException) {
+            sendMockStatus(false, null, null, "Нет прав или не назначен mock-провайдер")
+            mockEnabled = false
+        }
+    }
+
+    private fun pushLocationToProvider(
+        locationManager: LocationManager,
+        provider: String,
+        location: Location,
+        latFormatted: String,
+        lonFormatted: String
+    ) {
+        var attempts = 0
+        while (attempts < 2) {
+            val result =
+                runCatching { locationManager.setTestProviderLocation(provider, location) }
+            if (result.isSuccess) {
+                Log.i(
+                    tag,
+                    "Mock location pushed to $provider lat=$latFormatted lon=$lonFormatted"
+                )
+                return
+            }
+            val error = result.exceptionOrNull()
+            if (error is IllegalArgumentException &&
+                error.message?.contains("not a test provider", ignoreCase = true) == true &&
+                attempts == 0
+            ) {
+                Log.w(tag, "Provider $provider lost test status, reconfiguring")
+                testProvidersConfigured = false
+                val configured = ensureTestProviders(locationManager)
+                if (!configured) {
+                    Log.e(tag, "Reconfiguration failed: test providers not available")
+                    break
+                }
+                ensureTestProvidersActive(locationManager)
+                attempts++
+                continue
+            } else {
+                Log.e(tag, "Failed to push mock location to $provider", error)
+                registeredProviders.remove(provider)
+                testProvidersConfigured = registeredProviders.isNotEmpty()
+                break
+            }
+        }
+    }
+
+    private fun registerTestProvider(
+        locationManager: LocationManager,
+        provider: String
+    ): Boolean {
+        runCatching {
+            locationManager.removeTestProvider(provider)
+            Log.i(tag, "Removed existing test provider $provider")
+        }
+        val addResult =
             runCatching {
                 locationManager.addTestProvider(
                     provider,
@@ -430,85 +624,23 @@ class GNSSClientService : Service() {
                     ProviderProperties.ACCURACY_FINE
                 )
             }
+        if (addResult.isFailure) {
+            Log.w(tag, "Failed to add test provider $provider", addResult.exceptionOrNull())
+            registeredProviders.remove(provider)
+            return false
+        }
+        val enableResult =
             runCatching { locationManager.setTestProviderEnabled(provider, true) }
-        }
-    }
-
-    private fun startMocking() {
-        if (mockEnabled) return
-        if (!hasMockLocationPermission()) {
-            mockEnabled = false
-            sendMockStatus(false, null, null, "Нет разрешений на локацию")
-            return
-        }
-        val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        ensureTestProviders(manager)
-        runCatching {
-            fusedClient = LocationServices.getFusedLocationProviderClient(this)
-            fusedClient?.setMockMode(true)
-        }
-        runCatching {
-            providerNames.forEach { provider ->
-                manager.setTestProviderEnabled(provider, true)
-            }
-        }.onFailure {
-            mockEnabled = false
-            sendMockStatus(false, null, null, "Не назначен mock-провайдер")
-            return
-        }
-        mockEnabled = true
-        sendMockStatus(true, null, null, null)
-    }
-
-    private fun stopMocking() {
-        mockEnabled = false
-        runCatching { fusedClient?.setMockMode(false) }
-        sendMockStatus(false, null, null, null)
-    }
-
-    private fun pushLocation(locationManager: LocationManager, lat: Double, lon: Double) {
-        try {
-            val timestamp = System.currentTimeMillis()
-            val elapsedNanos =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-                    SystemClock.elapsedRealtimeNanos()
-                } else {
-                    0L
-                }
-            providerNames.forEach { provider ->
-                val location = Location(provider).apply {
-                    latitude = lat
-                    longitude = lon
-                    accuracy = 3.0f
-                    altitudeMeters?.let { altitude = it }
-                    speedMetersPerSecond?.let { speed = it.toFloat() }
-                    headingDegrees?.let { bearing = it.toFloat() }
-                    time = timestamp
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-                        elapsedRealtimeNanos = elapsedNanos
-                    }
-                }
-                runCatching { locationManager.setTestProviderLocation(provider, location) }
-            }
-            val fusedLocation = Location("fused").apply {
-                latitude = lat
-                longitude = lon
-                accuracy = 3.0f
-                altitudeMeters?.let { altitude = it }
-                speedMetersPerSecond?.let { speed = it.toFloat() }
-                headingDegrees?.let { bearing = it.toFloat() }
-                time = timestamp
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-                    elapsedRealtimeNanos = elapsedNanos
-                }
-            }
-            runCatching { fusedClient?.setMockLocation(fusedLocation) }
-            val latitude = if (mockEnabled) lat else null
-            val longitude = if (mockEnabled) lon else null
-            sendMockStatus(mockEnabled, latitude, longitude, null)
-        } catch (exception: SecurityException) {
-            sendMockStatus(false, null, null, "Нет прав или не назначен mock-провайдер")
-            mockEnabled = false
+        return if (enableResult.isSuccess) {
+            Log.i(tag, "Test provider $provider registered and enabled")
+            registeredProviders.add(provider)
+            testProvidersConfigured = registeredProviders.isNotEmpty()
+            true
+        } else {
+            Log.w(tag, "Failed to enable test provider $provider", enableResult.exceptionOrNull())
+            registeredProviders.remove(provider)
+            testProvidersConfigured = registeredProviders.isNotEmpty()
+            false
         }
     }
 
