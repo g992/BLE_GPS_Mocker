@@ -1,5 +1,9 @@
 package com.g992.blegpsmocker
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.bluetooth.BluetoothDevice
 import android.content.Context
@@ -13,8 +17,11 @@ import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
+import kotlin.jvm.JvmStatic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,10 +29,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-class AutoBleService : Service() {
+class GNSSClientService : Service() {
 
-    private val tag = "AutoBleService"
-    private var bleDataSource: BleDataSource? = null
+    private val tag = "GNSSClientService"
+    private var connectionManager: ConnectionManager? = null
     private var isScanning = false
     private var isConnected = false
     private var isConnecting = false
@@ -81,22 +88,49 @@ class AutoBleService : Service() {
         const val EXTRA_ALTITUDE = "altitude_meters"
         const val EXTRA_SPEED_MS = "speed_meters_per_second"
         const val EXTRA_HEADING_DEGREES = "heading_degrees"
+
+        @Volatile
+        private var serviceRunning = false
+
+        @JvmStatic
+        fun isServiceRunning(): Boolean = serviceRunning
+
+        @JvmStatic
+        fun isServiceEnabled(context: Context): Boolean =
+            AppPrefs.isMockEnabled(context)
+
+        @JvmStatic
+        fun setServiceEnabled(context: Context, enabled: Boolean) {
+            AppPrefs.setMockEnabled(context, enabled)
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        serviceRunning = true
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForegroundService()
-        ensureBleDataSource()
+        ensureConnectionManager()
         ensureAutoScanJob()
-        handleAction(intent?.action, intent)
+        val action = intent?.action
+        if (action == null) {
+            applyPreferences()
+            startBleIfNeeded()
+        } else {
+            handleAction(action, intent)
+        }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        runCatching { bleDataSource?.stopScan() }
-        runCatching { bleDataSource?.disconnect() }
-        bleDataSource = null
+        serviceRunning = false
+        runCatching { connectionManager?.stopScan() }
+        runCatching { connectionManager?.disconnect() }
+        connectionManager = null
         autoScanJob?.cancel()
         autoScanJob = null
         stopMocking()
@@ -121,10 +155,10 @@ class AutoBleService : Service() {
         }
     }
 
-    private fun ensureBleDataSource() {
-        if (bleDataSource != null) return
-        bleDataSource =
-            BleDataSource(
+    private fun ensureConnectionManager() {
+        if (connectionManager != null) return
+        connectionManager =
+            ConnectionManager(
                 context = this,
                 scanListener = createScanListener(),
                 connectionListener = createConnectionListener()
@@ -196,7 +230,7 @@ class AutoBleService : Service() {
 
             override fun onCoordinatesReceived(latitude: Double, longitude: Double) {
                 runCatching {
-                    val feedIntent = Intent(this@AutoBleService, AutoBleService::class.java).apply {
+                    val feedIntent = Intent(this@GNSSClientService, GNSSClientService::class.java).apply {
                         action = ACTION_FEED_COORD
                         putExtra(EXTRA_LAT, latitude)
                         putExtra(EXTRA_LON, longitude)
@@ -215,7 +249,7 @@ class AutoBleService : Service() {
             }
 
             override fun onHdopReceived(hdop: Double) {
-                this@AutoBleService.hdop = hdop
+                this@GNSSClientService.hdop = hdop
                 sendTelemetryUpdate()
             }
 
@@ -225,24 +259,24 @@ class AutoBleService : Service() {
             }
 
             override fun onAltitudeReceived(altitudeMeters: Double) {
-                this@AutoBleService.altitudeMeters = altitudeMeters
+                this@GNSSClientService.altitudeMeters = altitudeMeters
                 sendTelemetryUpdate()
             }
 
             override fun onSpeedReceived(speedMetersPerSecond: Double) {
-                this@AutoBleService.speedMetersPerSecond = speedMetersPerSecond
+                this@GNSSClientService.speedMetersPerSecond = speedMetersPerSecond
                 sendTelemetryUpdate()
             }
 
             override fun onHeadingReceived(headingDegrees: Double) {
-                this@AutoBleService.headingDegrees = headingDegrees
+                this@GNSSClientService.headingDegrees = headingDegrees
                 sendTelemetryUpdate()
             }
 
             override fun onDeviceStatusReceived(status: String) = Unit
 
             override fun onTtffReceived(ttffSeconds: Long) {
-                this@AutoBleService.ttffSeconds = ttffSeconds
+                this@GNSSClientService.ttffSeconds = ttffSeconds
                 sendTelemetryUpdate()
             }
         }
@@ -276,13 +310,13 @@ class AutoBleService : Service() {
             ACTION_BLE_CMD_DISCONNECT -> disconnectBle()
             ACTION_BLE_STATUS_REQUEST -> sendBleStatus()
             ACTION_START_MOCK -> {
-                AppPrefs.setMockEnabled(this, true)
+            setServiceEnabled(this, true)
                 sendMockStatus(true, null, null, null)
                 startMocking()
             }
 
             ACTION_STOP_MOCK -> {
-                AppPrefs.setMockEnabled(this, false)
+            setServiceEnabled(this, false)
                 sendMockStatus(false, null, null, null)
                 stopMocking()
             }
@@ -294,14 +328,14 @@ class AutoBleService : Service() {
 
     private fun stopBleScan() {
         synchronized(bleLock) {
-            runCatching { bleDataSource?.stopScan() }
+            runCatching { connectionManager?.stopScan() }
             isScanning = false
             sendBleStatus()
         }
     }
 
     private fun disconnectBle() {
-        runCatching { bleDataSource?.disconnect() }
+        runCatching { connectionManager?.disconnect() }
         synchronized(bleLock) {
             isConnecting = false
             sendBleStatus()
@@ -325,7 +359,7 @@ class AutoBleService : Service() {
     }
 
     private fun applyPreferences() {
-        val shouldEnable = AppPrefs.isMockEnabled(this)
+        val shouldEnable = isServiceEnabled(this)
         sendMockStatus(shouldEnable, null, null, null)
         if (shouldEnable) {
             startMocking()
@@ -344,7 +378,7 @@ class AutoBleService : Service() {
 
     private fun tryStartScan() {
         runCatching {
-            val dataSource = bleDataSource ?: return
+            val dataSource = connectionManager ?: return
             val hasAllPermissions =
                 dataSource.requiredPermissions().all { perm ->
                     checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
@@ -534,5 +568,83 @@ class AutoBleService : Service() {
             ?.trim()
             ?.toIntOrNull()
             ?.let { intent.putExtra(EXTRA_FIX_TYPE, it) }
+    }
+}
+
+object NotificationUtils {
+    const val CHANNEL_ID = "mock_location_channel"
+    const val CHANNEL_NAME = "Мок геопозиции"
+    const val NOTIFICATION_ID = 1001
+
+    const val CHANNEL_ATTENTION_ID = "mock_location_attention"
+    const val CHANNEL_ATTENTION_NAME = "Требуется действие пользователя"
+    const val NOTIFICATION_ATTENTION_ID = 1002
+
+    fun ensureChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (manager.getNotificationChannel(CHANNEL_ID) == null) {
+                val channel =
+                    NotificationChannel(
+                        CHANNEL_ID,
+                        CHANNEL_NAME,
+                        NotificationManager.IMPORTANCE_LOW
+                    ).apply { setShowBadge(false) }
+                manager.createNotificationChannel(channel)
+            }
+            if (manager.getNotificationChannel(CHANNEL_ATTENTION_ID) == null) {
+                val channel =
+                    NotificationChannel(
+                        CHANNEL_ATTENTION_ID,
+                        CHANNEL_ATTENTION_NAME,
+                        NotificationManager.IMPORTANCE_HIGH
+                    ).apply { setShowBadge(false) }
+                manager.createNotificationChannel(channel)
+            }
+        }
+    }
+
+    fun buildForegroundNotification(context: Context, contentText: String): Notification {
+        ensureChannel(context)
+        return NotificationCompat.Builder(context, CHANNEL_ID)
+            .setContentTitle(CHANNEL_NAME)
+            .setContentText(contentText)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .build()
+    }
+
+    fun showNeedsUserActionNotification(context: Context, contentText: String) {
+        ensureChannel(context)
+        val intent = Intent(context, MainActivity::class.java)
+        val pendingIntent =
+            PendingIntent.getActivity(
+                context,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        val notification =
+            NotificationCompat.Builder(context, CHANNEL_ATTENTION_ID)
+                .setContentTitle(CHANNEL_ATTENTION_NAME)
+                .setContentText(contentText)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .build()
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                val granted =
+                    context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                        PackageManager.PERMISSION_GRANTED
+                if (!granted) return
+            }
+            NotificationManagerCompat.from(context)
+                .notify(NOTIFICATION_ATTENTION_ID, notification)
+        } catch (_: SecurityException) {
+        }
     }
 }

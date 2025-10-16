@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.location.provider.ProviderProperties
@@ -82,10 +83,10 @@ class MainActivity : ComponentActivity() {
     private val bleStatusReceiver =
         object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                if (intent.action != AutoBleService.ACTION_BLE_STATUS) return
+                if (intent.action != GNSSClientService.ACTION_BLE_STATUS) return
 
-                val connected = intent.getBooleanExtra(AutoBleService.EXTRA_BLE_CONNECTED, false)
-                val scanning = intent.getBooleanExtra(AutoBleService.EXTRA_BLE_SCANNING, false)
+                val connected = intent.getBooleanExtra(GNSSClientService.EXTRA_BLE_CONNECTED, false)
+                val scanning = intent.getBooleanExtra(GNSSClientService.EXTRA_BLE_SCANNING, false)
                 bleConnected.value = connected
                 bleScanning.value = scanning
                 Log.d(bleTag, "BLE status: connected=$connected, scanning=$scanning")
@@ -97,7 +98,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         refreshPermissionsState()
 
-        val bleFilter = IntentFilter(AutoBleService.ACTION_BLE_STATUS)
+        val bleFilter = IntentFilter(GNSSClientService.ACTION_BLE_STATUS)
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(bleStatusReceiver, bleFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -106,8 +107,8 @@ class MainActivity : ComponentActivity() {
         }
 
         try {
-            val bleStatusIntent = Intent(this, AutoBleService::class.java).apply {
-                action = AutoBleService.ACTION_BLE_STATUS_REQUEST
+            val bleStatusIntent = Intent(this, GNSSClientService::class.java).apply {
+                action = GNSSClientService.ACTION_BLE_STATUS_REQUEST
             }
             ContextCompat.startForegroundService(this, bleStatusIntent)
         } catch (_: Exception) {
@@ -115,8 +116,8 @@ class MainActivity : ComponentActivity() {
 
         try {
             if (AppPrefs.isMockEnabled(this)) {
-                val intent = Intent(this, AutoBleService::class.java).apply {
-                    action = AutoBleService.ACTION_APPLY_PREFS
+                val intent = Intent(this, GNSSClientService::class.java).apply {
+                    action = GNSSClientService.ACTION_APPLY_PREFS
                 }
                 ContextCompat.startForegroundService(this, intent)
             }
@@ -143,17 +144,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startMockService() {
-        AppPrefs.setMockEnabled(this, true)
-        val intent = Intent(this, AutoBleService::class.java).apply {
-            action = AutoBleService.ACTION_START_MOCK
+        GNSSClientService.setServiceEnabled(this, true)
+        val intent = Intent(this, GNSSClientService::class.java).apply {
+            action = GNSSClientService.ACTION_START_MOCK
         }
         ContextCompat.startForegroundService(this, intent)
     }
 
     private fun stopMockService() {
-        AppPrefs.setMockEnabled(this, false)
-        val intent = Intent(this, AutoBleService::class.java).apply {
-            action = AutoBleService.ACTION_STOP_MOCK
+        GNSSClientService.setServiceEnabled(this, false)
+        val intent = Intent(this, GNSSClientService::class.java).apply {
+            action = GNSSClientService.ACTION_STOP_MOCK
         }
         stopService(intent)
     }
@@ -294,8 +295,8 @@ fun MainScreen(
     LaunchedEffect(Unit) {
         isRunning = AppPrefs.isMockEnabled(context)
         try {
-            val intent = Intent(context, AutoBleService::class.java).apply {
-                action = AutoBleService.ACTION_APPLY_PREFS
+            val intent = Intent(context, GNSSClientService::class.java).apply {
+                action = GNSSClientService.ACTION_APPLY_PREFS
             }
             ContextCompat.startForegroundService(context, intent)
         } catch (_: Exception) {
@@ -306,16 +307,17 @@ fun MainScreen(
         val receiver =
             object : BroadcastReceiver() {
                 override fun onReceive(c: Context, intent: Intent) {
-                    if (intent.action != AutoBleService.ACTION_STATUS) return
+                    if (intent.action != GNSSClientService.ACTION_STATUS) return
 
-                    if (intent.hasExtra(AutoBleService.EXTRA_RUNNING)) {
-                        val running = intent.getBooleanExtra(AutoBleService.EXTRA_RUNNING, false)
+                    if (intent.hasExtra(GNSSClientService.EXTRA_RUNNING)) {
+                        val running =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_RUNNING, false)
                         isRunning = running
                         statusText = if (running) "Активен" else "Остановлен"
                     }
-                    val lat = intent.getDoubleExtra(AutoBleService.EXTRA_LAT, Double.NaN)
-                    val lon = intent.getDoubleExtra(AutoBleService.EXTRA_LON, Double.NaN)
-                    val error = intent.getStringExtra(AutoBleService.EXTRA_ERROR)
+                    val lat = intent.getDoubleExtra(GNSSClientService.EXTRA_LAT, Double.NaN)
+                    val lon = intent.getDoubleExtra(GNSSClientService.EXTRA_LON, Double.NaN)
+                    val error = intent.getStringExtra(GNSSClientService.EXTRA_ERROR)
                     if (!error.isNullOrEmpty()) {
                         mockStatus = error
                     } else if (!lat.isNaN() && !lon.isNaN()) {
@@ -323,15 +325,16 @@ fun MainScreen(
                         mockStatus = if (isRunning) "Работает" else "Нет данных"
                     }
 
-                    val percent = intent.getIntExtra(AutoBleService.EXTRA_SIGNAL_PERCENT, -1)
+                    val percent =
+                        intent.getIntExtra(GNSSClientService.EXTRA_SIGNAL_PERCENT, -1)
                     if (percent >= 0) {
                         signalPercent = "Сигнал: ${percent}%"
                     }
-                    val sat = intent.getIntExtra(AutoBleService.EXTRA_SAT_COUNT, -1)
+                    val sat = intent.getIntExtra(GNSSClientService.EXTRA_SAT_COUNT, -1)
                     if (sat >= 0) {
                         satellites = "Спутников: ${sat}"
                     }
-                    intent.getStringExtra(AutoBleService.EXTRA_SIGNAL_LEVELS)?.let { raw ->
+                    intent.getStringExtra(GNSSClientService.EXTRA_SIGNAL_LEVELS)?.let { raw ->
                         val parts =
                             raw.split(',')
                                 .map { it.trim() }
@@ -340,7 +343,7 @@ fun MainScreen(
                         q2Count = parts.count { it == "2" }
                         q3Count = parts.count { it == "3" }
                     }
-                    val fixType = intent.getIntExtra(AutoBleService.EXTRA_FIX_TYPE, -1)
+                    val fixType = intent.getIntExtra(GNSSClientService.EXTRA_FIX_TYPE, -1)
                     if (fixType >= 0) {
                         val fixLabel =
                             when (fixType) {
@@ -348,18 +351,18 @@ fun MainScreen(
                                 1 -> "2D"
                                 2 -> "3D"
                                 else -> fixType.toString()
-                            }
+                        }
                         fixTypeText = "Тип фиксации: $fixLabel"
                     }
-                    if (intent.hasExtra(AutoBleService.EXTRA_TTFF)) {
-                        val ttff = intent.getLongExtra(AutoBleService.EXTRA_TTFF, -1L)
+                    if (intent.hasExtra(GNSSClientService.EXTRA_TTFF)) {
+                        val ttff = intent.getLongExtra(GNSSClientService.EXTRA_TTFF, -1L)
                         if (ttff >= 0L) {
                             ttffText = "Время до первой фиксации: ${ttff} сек"
                         }
                     }
                 }
             }
-        val filter = IntentFilter(AutoBleService.ACTION_STATUS)
+        val filter = IntentFilter(GNSSClientService.ACTION_STATUS)
         if (Build.VERSION.SDK_INT >= 33) {
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -568,6 +571,28 @@ private fun SignalBadge(count: Int, color: Color, textSize: TextUnit = 14.sp) {
             fontWeight = FontWeight.Medium,
             fontSize = textSize
         )
+    }
+}
+
+object AppPrefs {
+    private const val PREFS_NAME = "blegpsmocker_prefs"
+    private const val KEY_MOCK_ENABLED = "mock_enabled"
+
+    private fun prefs(context: Context): SharedPreferences {
+        val appContext = context.applicationContext ?: context
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val deviceContext = appContext.createDeviceProtectedStorageContext()
+            deviceContext.moveSharedPreferencesFrom(appContext, PREFS_NAME)
+            return deviceContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }
+        return appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    fun isMockEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_MOCK_ENABLED, false)
+
+    fun setMockEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_MOCK_ENABLED, enabled).apply()
     }
 }
 /*

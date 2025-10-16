@@ -58,7 +58,7 @@ interface BleConnectionDataListener {
 }
 
 @SuppressLint("MissingPermission")
-class BleDataSource(
+class ConnectionManager(
     private val context: Context,
     private var scanListener: BleScanListener? = null,
     private var connectionListener: BleConnectionDataListener? = null
@@ -71,7 +71,7 @@ class BleDataSource(
     private val handler = Handler(Looper.getMainLooper())
     private var isScanning = false
     private var foundDeviceDuringScan = false
-    private val tag = "BleDataSource"
+    private val tag = "ConnectionManager"
     private var gpsService: android.bluetooth.BluetoothGattService? = null
 
     private val scanCallback =
