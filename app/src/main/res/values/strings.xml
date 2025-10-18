@@ -1,3 +1,83 @@
 <resources>
     <string name="app_name">BLE GPS Mocker</string>
+
+    <!-- General states -->
+    <string name="unknown">неизвестно</string>
+    <string name="status_format">%1$s: %2$s</string>
+    <string name="connected">подключено</string>
+    <string name="disconnected">не подключено</string>
+    <string name="status_unknown">Статус: неизвестно</string>
+    <string name="connection_unknown">Статус соединения: неизвестно</string>
+
+    <!-- Service controls -->
+    <string name="service_running">Сервис работает</string>
+    <string name="service_stopped">Сервис остановлен</string>
+    <string name="button_start_service">Запустить сервис</string>
+    <string name="button_stop_service">Остановить сервис</string>
+    <string name="button_request_permissions">Запросить разрешения</string>
+    <string name="toast_service_enabled">Сервис GNSS запущен</string>
+    <string name="toast_service_disabled">Сервис GNSS остановлен</string>
+
+    <!-- Connection & telemetry -->
+    <string name="connection_status">Статус соединения: %1$s</string>
+    <string name="connection_status_connected">подключено</string>
+    <string name="connection_status_disconnected">отключено</string>
+    <string name="data_age_status">Данные: %1$s</string>
+    <string name="data_age_format_s">%1$d с назад</string>
+    <string name="data_age_format_ms">%1$d мин %2$d с назад</string>
+    <string name="data_age_unknown">Данные: неизвестно</string>
+
+    <string name="location_status">Координаты: %1$s</string>
+    <string name="location_unknown">Координаты: неизвестно</string>
+    <string name="location_format">%.6f, %.6f</string>
+    <string name="altitude_format">  Высота: %.1f м</string>
+    <string name="location_accuracy_format">  Точность: %.1f м</string>
+
+    <string name="satellites_status">Спутников: %1$d</string>
+    <string name="satellites_unknown">Спутников: 0</string>
+    <string name="provider_status">Провайдер: %1$s</string>
+    <string name="provider_unknown">Провайдер: неизвестно</string>
+    <string name="age_status">Возраст фикса: %1$s</string>
+    <string name="age_format">%.1f с</string>
+    <string name="age_unknown">Возраст фикса: неизвестно</string>
+
+    <string name="movement_last_update">Последнее обновление: %1$s</string>
+    <string name="movement_last_update_unknown">Последнее обновление: —</string>
+    <string name="movement_speed">Скорость: %1$s</string>
+    <string name="speed_format">%.2f м/с</string>
+    <string name="movement_bearing">Курс: %1$s</string>
+    <string name="bearing_format">%.1f°</string>
+    <string name="additional_info_unknown">Скорость: неизвестно  Курс: неизвестно</string>
+
+    <!-- Permissions -->
+    <string name="all_permissions_granted">Все разрешения выданы</string>
+    <string name="missing_permissions">Отсутствуют разрешения: %1$s</string>
+    <string name="missing_permissions_placeholder">Необходимы разрешения</string>
+    <string name="all_permissions_granted_toast">Разрешения получены</string>
+    <string name="missing_permissions_toast">Выданы не все разрешения</string>
+    <string name="permission_fine_location">точное местоположение</string>
+    <string name="permission_coarse_location">приближенное местоположение</string>
+    <string name="permission_network_state">состояние сети</string>
+    <string name="permission_wifi_state">Wi‑Fi</string>
+    <string name="permission_change_wifi">изменение Wi‑Fi</string>
+    <string name="permission_location_extra_commands">доп. команды локации</string>
+    <string name="permission_foreground_service">foreground сервис</string>
+    <string name="permission_wake_lock">wake lock</string>
+    <string name="permission_receive_boot_completed">запуск после загрузки</string>
+    <string name="permission_request_ignore_battery_optimizations">игнорирование оптимизаций батареи</string>
+
+    <!-- Mock provider -->
+    <string name="mock_location_enable_message">Назначьте приложение макет-провайдером геоданных</string>
+    <string name="mock_location_provider_ready">Mock-провайдер готов</string>
+    <string name="mock_location_permission_denied">Нет разрешения на mock геоданные</string>
+    <string name="mock_location_setup_failed">Не удалось настроить mock-провайдер: %1$s</string>
+    <string name="mock_location_status_placeholder">Статус mock-провайдера будет показан здесь</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_description">Состояние сервиса %1$s</string>
+    <string name="notification_title_connected">%1$s подключен</string>
+    <string name="notification_title_disconnected">%1$s отключен</string>
+    <string name="notification_text_connected">Данные обновлены %.1f с назад</string>
+    <string name="notification_text_connected_no_age">Данные получены</string>
+    <string name="notification_text_disconnected">Нет подключения к устройству</string>
 </resources>

@@ -257,11 +257,20 @@ class ConnectionManager(
         characteristic: BluetoothGattCharacteristic,
         data: ByteArray?
     ) {
-        data?.let { parseAndNotify(characteristic.uuid, it) }
+        if (data == null) {
+            Log.w(tag, "Characteristic ${characteristic.uuid} changed with null data")
+            return
+        }
+        Log.v(
+            tag,
+            "Characteristic ${characteristic.uuid} changed (${data.size} bytes)"
+        )
+        parseAndNotify(characteristic.uuid, data)
     }
 
     private fun parseAndNotify(uuid: UUID, data: ByteArray) {
         val stringValue = data.toString(Charsets.UTF_8).trim()
+        Log.d(tag, "Incoming payload for $uuid: $stringValue")
         try {
             when (uuid) {
                 BleUuids.CHAR_COORDINATES_UUID -> handleCoordinatesPayload(stringValue)
@@ -281,6 +290,10 @@ class ConnectionManager(
             val payload = JSONObject(raw)
             val lat = payload.optDouble("lt")
             val lon = payload.optDouble("lg")
+            Log.i(
+                tag,
+                "Coordinates payload parsed lt=$lat lg=$lon spd=${payload.optDouble("spd")} alt=${payload.optDouble("alt")}"
+            )
             if (!lat.isNaN() && !lon.isNaN()) {
                 connectionListener?.onCoordinatesReceived(lat, lon)
             }
@@ -302,6 +315,10 @@ class ConnectionManager(
         try {
             val payload = JSONObject(raw)
             val fixValue = payload.optInt("fix", -1)
+            Log.d(
+                tag,
+                "Status payload parsed fix=$fixValue hdop=${payload.optDouble("hdop")} signals=${payload.optJSONArray("signals")}"
+            )
             if (fixValue != -1) {
                 val type = if (fixValue == 1) 1 else 0
                 connectionListener?.onFixStatusReceived("$fixValue,$type")

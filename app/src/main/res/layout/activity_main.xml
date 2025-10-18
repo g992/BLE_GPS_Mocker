@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:gravity="center_horizontal">
+
+        <TextView
+            android:id="@+id/serviceStatusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/service_stopped"
+            android:textAppearance="?android:attr/textAppearanceLarge"
+            android:textStyle="bold"
+            android:paddingBottom="16dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_horizontal"
+            android:paddingBottom="16dp">
+
+            <Button
+                android:id="@+id/startServiceButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/button_start_service" />
+
+            <View
+                android:layout_width="16dp"
+                android:layout_height="0dp" />
+
+            <Button
+                android:id="@+id/stopServiceButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:enabled="false"
+                android:text="@string/button_stop_service" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:text="@string/status_unknown"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/connectionText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:text="@string/connection_unknown"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/dataAgeText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/data_age_unknown"
+            android:paddingBottom="12dp" />
+
+        <TextView
+            android:id="@+id/locationText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:text="@string/location_unknown"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/satellitesText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/satellites_unknown"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/providerText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/provider_unknown"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/ageText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/age_unknown"
+            android:paddingBottom="12dp" />
+
+        <TextView
+            android:id="@+id/additionalInfoText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/additional_info_unknown"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/lastUpdateText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/movement_last_update_unknown"
+            android:paddingBottom="16dp" />
+
+        <TextView
+            android:id="@+id/permissionsStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/missing_permissions_placeholder"
+            android:paddingBottom="12dp" />
+
+        <Button
+            android:id="@+id/requestPermissionsButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/button_request_permissions" />
+
+        <TextView
+            android:id="@+id/mockLocationStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/mock_location_status_placeholder"
+            android:paddingTop="16dp" />
+    </LinearLayout>
+</ScrollView>
