@@ -31,6 +31,8 @@ object BleUuids {
     val GPS_SERVICE_UUID: UUID = UUID.fromString("14f0514a-e15f-4ad3-89a6-b4cb3ac86abe")
     val CHAR_COORDINATES_UUID: UUID = UUID.fromString("12c64fea-7ed9-40be-9c7e-9912a5050d23")
     val CHAR_STATUS_UUID: UUID = UUID.fromString("3e4f5d6c-7b8a-9d0e-1f2a-3b4c5d6e7f8a")
+    val CHAR_AP_CONTROL_UUID: UUID = UUID.fromString("a37f8c1b-281d-4e15-8fb2-0b7e6ebd21c0")
+    val CHAR_MODE_CONTROL_UUID: UUID = UUID.fromString("d047f6b3-5f7c-4e5b-9c21-4c0f2b6a8f10")
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 }
 
@@ -55,6 +57,8 @@ interface BleConnectionDataListener {
     fun onHeadingReceived(headingDegrees: Double)
     fun onDeviceStatusReceived(status: String)
     fun onTtffReceived(ttffSeconds: Long)
+    fun onApControlChanged(enabled: Boolean)
+    fun onBridgeModeChanged(enabled: Boolean)
 }
 
 @SuppressLint("MissingPermission")
@@ -216,6 +220,15 @@ class ConnectionManager(
                 handleCharacteristicChange(characteristic, characteristic.value)
             }
 
+            override fun onCharacteristicWrite(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                status: Int
+            ) {
+                handleCharacteristicWrite(characteristic, characteristic.value, status)
+            }
+
+
             override fun onDescriptorWrite(
                 gatt: BluetoothGatt,
                 descriptor: BluetoothGattDescriptor,
@@ -268,6 +281,26 @@ class ConnectionManager(
         parseAndNotify(characteristic.uuid, data)
     }
 
+    private fun handleCharacteristicWrite(
+        characteristic: BluetoothGattCharacteristic,
+        data: ByteArray?,
+        status: Int
+    ) {
+        val uuid = characteristic.uuid
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            Log.i(tag, "Characteristic $uuid written successfully")
+            if (data != null) {
+                parseAndNotify(uuid, data)
+            } else {
+                Log.d(tag, "Characteristic $uuid write success with no value payload")
+            }
+        } else {
+            val message = "Characteristic write failed for $uuid, status: $status"
+            Log.e(tag, message)
+            connectionListener?.onError(message)
+        }
+    }
+
     private fun parseAndNotify(uuid: UUID, data: ByteArray) {
         val stringValue = data.toString(Charsets.UTF_8).trim()
         Log.d(tag, "Incoming payload for $uuid: $stringValue")
@@ -275,6 +308,14 @@ class ConnectionManager(
             when (uuid) {
                 BleUuids.CHAR_COORDINATES_UUID -> handleCoordinatesPayload(stringValue)
                 BleUuids.CHAR_STATUS_UUID -> handleStatusPayload(stringValue)
+                BleUuids.CHAR_AP_CONTROL_UUID -> {
+                    val enabled = stringValue == "1"
+                    connectionListener?.onApControlChanged(enabled)
+                }
+                BleUuids.CHAR_MODE_CONTROL_UUID -> {
+                    val enabled = stringValue == "1"
+                    connectionListener?.onBridgeModeChanged(enabled)
+                }
                 else -> Log.d(tag, "No specific parsing for UUID $uuid")
             }
         } catch (exception: Exception) {
@@ -349,7 +390,14 @@ class ConnectionManager(
     private fun StringBuilder.appendSignals(array: JSONArray) {
         for (index in 0 until array.length()) {
             if (index > 0) append(',')
-            append(array.optInt(index))
+            val rawValue = array.opt(index)
+            val level =
+                when (rawValue) {
+                    is Number -> rawValue.toInt()
+                    is String -> rawValue.trim().toIntOrNull() ?: 0
+                    else -> 0
+                }
+            append(level)
         }
     }
 
@@ -420,6 +468,57 @@ class ConnectionManager(
         } else {
             Log.i(tag, "Requested read for characteristic $characteristicUuid")
         }
+    }
+
+    fun readCharacteristic(uuid: UUID): Boolean {
+        val gatt = bluetoothGatt ?: run {
+            Log.w(tag, "readCharacteristic($uuid) skipped: GATT not connected")
+            return false
+        }
+        val service = gpsService ?: run {
+            Log.w(tag, "readCharacteristic($uuid) skipped: service unavailable")
+            return false
+        }
+        readCharacteristicInternal(gatt, service, uuid)
+        return true
+    }
+
+    fun writeCharacteristic(uuid: UUID, payload: String): Boolean {
+        val gatt = bluetoothGatt ?: run {
+            Log.w(tag, "writeCharacteristic($uuid) skipped: GATT not connected")
+            return false
+        }
+        val service = gpsService ?: run {
+            Log.w(tag, "writeCharacteristic($uuid) skipped: service unavailable")
+            return false
+        }
+        val characteristic = service.getCharacteristic(uuid)
+        if (characteristic == null) {
+            Log.e(tag, "Characteristic $uuid not found for write")
+            return false
+        }
+        if (!hasConnectPermission()) {
+            connectionListener?.onError("Missing BLUETOOTH_CONNECT permission to write characteristic")
+            return false
+        }
+        val supportsWrite =
+            (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0 ||
+                (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+        if (!supportsWrite) {
+            Log.e(tag, "Characteristic $uuid is not writable (properties=${characteristic.properties})")
+            return false
+        }
+
+        val data = payload.toByteArray(Charsets.UTF_8)
+        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        characteristic.value = data
+        val result = gatt.writeCharacteristic(characteristic)
+        if (!result) {
+            Log.e(tag, "writeCharacteristic($uuid) failed to enqueue GATT write")
+        } else {
+            Log.i(tag, "Enqueued write for $uuid payload=$payload")
+        }
+        return result
     }
 
     fun hasScanPermission(): Boolean {

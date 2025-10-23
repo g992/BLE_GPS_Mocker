@@ -1,4 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.BLEGPSMocker" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+    <style name="Theme.BLEGPSMocker" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/md_primary</item>
+        <item name="colorPrimaryVariant">@color/md_primary_variant</item>
+        <item name="colorSecondary">@color/md_secondary</item>
+        <item name="colorSecondaryVariant">@color/md_secondary_variant</item>
+        <item name="colorSurface">@color/md_surface</item>
+        <item name="colorError">@color/md_error</item>
+
+        <item name="colorOnPrimary">@color/md_on_primary</item>
+        <item name="colorOnSecondary">@color/md_on_secondary</item>
+        <item name="colorOnSurface">@color/md_on_surface</item>
+        <item name="colorOnBackground">@color/md_on_background</item>
+        <item name="colorOnError">@color/md_on_error</item>
+
+        <item name="android:colorBackground">@color/md_background</item>
+        <item name="android:windowBackground">@color/md_background</item>
+        <item name="materialButtonStyle">@style/Widget.BLEGPSMocker.PrimaryButton</item>
+    </style>
 </resources>

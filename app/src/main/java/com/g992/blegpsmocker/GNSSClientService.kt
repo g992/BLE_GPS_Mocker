@@ -28,7 +28,10 @@ private const val HDOP_TO_ACCURACY_METERS = 5.0
 private const val MIN_ACCURACY_METERS = 3f
 private const val MAX_ACCURACY_METERS = 50f
 private const val MIN_MOVEMENT_THRESHOLD_METERS = 0.1
+private const val SATELLITE_SIGNAL_STRONG_THRESHOLD = 35
+private const val SATELLITE_SIGNAL_MEDIUM_THRESHOLD = 20
 private const val RESCAN_DELAY_MS = 3_000L
+private const val STATIC_AP_SSID = "GPS-C3-xxxxxx"
 
 class GNSSClientService :
     Service(),
@@ -41,6 +44,12 @@ class GNSSClientService :
     private var wakeLock: PowerManager.WakeLock? = null
 
     private val handler = Handler(Looper.getMainLooper())
+    private val rescanRunnable =
+        Runnable {
+            if (!isConnected && AppPrefs.isMockEnabled(this)) {
+                startBleWorkflow()
+            }
+        }
     private val isReceivingUpdates = AtomicBoolean(false)
     private val registeredProviders = mutableSetOf<String>()
     private val mockProvidersConfigured = AtomicBoolean(false)
@@ -57,6 +66,8 @@ class GNSSClientService :
     private var speedMetersPerSecond: Double? = null
     private var headingDegrees: Double? = null
     private var ttffSeconds: Long? = null
+    private var apControlEnabled: Boolean? = null
+    private var bridgeModeEnabled: Boolean? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -69,6 +80,11 @@ class GNSSClientService :
                 "GNSSClientService:WakeLock"
             )
         ensureConnectionManager()
+        val currentMockApp =
+            runCatching {
+                Settings.Secure.getString(contentResolver, "mock_location_app")
+            }.getOrNull()
+        Log.d(TAG, "Current mock_location_app = $currentMockApp")
         serviceRunning = true
     }
 
@@ -92,6 +108,7 @@ class GNSSClientService :
         stopBleWorkflow()
         connectionManager = null
         handler.removeCallbacksAndMessages(null)
+        handler.removeCallbacks(rescanRunnable)
         wakeLock?.let {
             if (it.isHeld) {
                 it.release()
@@ -105,6 +122,36 @@ class GNSSClientService :
 
     inner class GNSSClientBinder : Binder() {
         fun getService(): GNSSClientService = this@GNSSClientService
+    }
+
+    fun getApControlState(): Boolean? = apControlEnabled
+
+    fun getBridgeModeState(): Boolean? = bridgeModeEnabled
+
+    fun getApControlSsidHint(): String = STATIC_AP_SSID
+
+    fun requestApControlChange(enabled: Boolean): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "requestApControlChange skipped: not connected")
+            return false
+        }
+        val payload = if (enabled) "1" else "0"
+        return connectionManager?.writeCharacteristic(BleUuids.CHAR_AP_CONTROL_UUID, payload)
+            ?: false
+    }
+
+    fun requestBridgeModeChange(enabled: Boolean): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "requestBridgeModeChange skipped: not connected")
+            return false
+        }
+        val payload = if (enabled) "1" else "0"
+        return connectionManager?.writeCharacteristic(BleUuids.CHAR_MODE_CONTROL_UUID, payload)
+            ?: false
+    }
+
+    fun refreshDeviceSettings() {
+        requestDeviceSettingsRead()
     }
 
     private fun ensureConnectionManager() {
@@ -138,6 +185,11 @@ class GNSSClientService :
         }
         isConnected = false
         updateNotification()
+    }
+
+    private fun scheduleRescan() {
+        handler.removeCallbacks(rescanRunnable)
+        handler.postDelayed(rescanRunnable, RESCAN_DELAY_MS)
     }
 
     private fun startReceivingLocationUpdates() {
@@ -209,7 +261,8 @@ class GNSSClientService :
             if (result.isSuccess) {
                 anyEnabled = true
             } else {
-                Log.w(TAG, "Failed to ensure provider $provider active", result.exceptionOrNull())
+                val reason = result.exceptionOrNull()?.message ?: "unknown error"
+                Log.w(TAG, "Failed to ensure provider $provider active: $reason")
                 registeredProviders.remove(provider)
             }
         }
@@ -218,9 +271,8 @@ class GNSSClientService :
     }
 
     private fun disableTestProviders() {
-        registeredProviders.toList().forEach { provider ->
+        registeredProviders.forEach { provider ->
             runCatching { locationManager.setTestProviderEnabled(provider, false) }
-            runCatching { locationManager.removeTestProvider(provider) }
         }
         registeredProviders.clear()
         mockProvidersConfigured.set(false)
@@ -228,32 +280,38 @@ class GNSSClientService :
 
     private fun registerTestProvider(provider: String): Boolean {
         runCatching { locationManager.removeTestProvider(provider) }
+
         val addResult =
             runCatching {
                 locationManager.addTestProvider(
                     provider,
                     false,
-                    false,
+                    true,
                     false,
                     false,
                     true,
                     true,
                     true,
-                    ProviderProperties.POWER_USAGE_LOW,
+                    ProviderProperties.POWER_USAGE_HIGH,
                     ProviderProperties.ACCURACY_FINE
                 )
             }
+
         if (addResult.isFailure) {
-            Log.w(TAG, "Failed to add test provider $provider", addResult.exceptionOrNull())
+            val reason = addResult.exceptionOrNull()?.message ?: "unknown error"
+            Log.w(TAG, "Failed to add test provider $provider: $reason")
             return false
         }
+
         val enableResult =
             runCatching { locationManager.setTestProviderEnabled(provider, true) }
         return if (enableResult.isSuccess) {
             registeredProviders.add(provider)
             true
         } else {
-            Log.w(TAG, "Failed to enable test provider $provider", enableResult.exceptionOrNull())
+            val reason = enableResult.exceptionOrNull()?.message ?: "unknown error"
+            Log.w(TAG, "Failed to enable test provider $provider: $reason")
+            runCatching { locationManager.removeTestProvider(provider) }
             false
         }
     }
@@ -268,14 +326,19 @@ class GNSSClientService :
 
         ensureMockProvidersActive()
 
-        val previousUpdate = lastUpdateTime
-        if (previousUpdate > 0L) {
-            Log.d(TAG, "handleLocationUpdate deltaMillis=${System.currentTimeMillis() - previousUpdate}")
+        val now = System.currentTimeMillis()
+        if (lastUpdateTime > 0 && now - lastUpdateTime < 200) {
+            Log.v(TAG, "Skipping mock update due to rate limit: ${now - lastUpdateTime}ms since last")
+            return
+        }
+
+        if (lastUpdateTime > 0L) {
+            Log.d(TAG, "handleLocationUpdate deltaMillis=${now - lastUpdateTime}")
         } else {
             Log.d(TAG, "handleLocationUpdate first update")
         }
 
-        val timestamp = System.currentTimeMillis()
+        val timestamp = now
         val elapsedNanos =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
                 SystemClock.elapsedRealtimeNanos()
@@ -325,15 +388,23 @@ class GNSSClientService :
                     this.elapsedRealtimeNanos = baseLocation.elapsedRealtimeNanos
                 }
             }
-            runCatching {
-                locationManager.setTestProviderLocation(provider, providerLocation)
-            }.onFailure { error ->
-                Log.w(TAG, "Failed to push mock location to $provider", error)
-            }.onSuccess {
-                Log.d(
-                    TAG,
-                    "Mock location sent to $provider lat=${providerLocation.latitude} lon=${providerLocation.longitude} time=$timestamp"
-                )
+            handler.post {
+                try {
+                    locationManager.setTestProviderLocation(provider, providerLocation)
+                    Log.d(
+                        TAG,
+                        "Mock location sent to $provider lat=${providerLocation.latitude} lon=${providerLocation.longitude}"
+                    )
+                } catch (error: IllegalArgumentException) {
+                    if (error.message?.contains("not a test provider") == true) {
+                        Log.w(TAG, "Provider $provider reverted to real source, re-enabling mock")
+                        registerTestProvider(provider)
+                    } else {
+                        Log.e(TAG, "Failed to push mock location to $provider", error)
+                    }
+                } catch (error: Exception) {
+                    Log.e(TAG, "Unexpected mock push error for provider $provider", error)
+                }
             }
         }
 
@@ -342,10 +413,11 @@ class GNSSClientService :
         lastCoordinatesTimestamp = timestamp
         lastProvider = providers.firstOrNull()
 
-        val satellites = computeSatelliteCount()
+        val satelliteBreakdown = computeSatelliteSignalBreakdown()
+        val satellites = satelliteBreakdown.total
         val locationAge = 0f
 
-        broadcastLocation(baseLocation, satellites, lastProvider, locationAge)
+        broadcastLocation(baseLocation, satellites, lastProvider, locationAge, satelliteBreakdown)
         updateNotification()
         Log.d(
             TAG,
@@ -407,18 +479,37 @@ class GNSSClientService :
         return (distance / deltaSeconds).takeIf { it.isFinite() && it >= 0.0 }
     }
 
-    private fun computeSatelliteCount(): Int {
-        val raw = signalLevels ?: return 0
-        return raw.split(',')
+    private fun computeSatelliteSignalBreakdown(): SatelliteSignalBreakdown {
+        val rawLevels = signalLevels?.takeIf { it.isNotBlank() } ?: return SatelliteSignalBreakdown()
+        var strong = 0
+        var medium = 0
+        var weak = 0
+        rawLevels.split(',')
             .map { it.trim() }
-            .count { it.isNotEmpty() }
+            .forEach { token ->
+                val value = token.toIntOrNull() ?: return@forEach
+                when {
+                    value >= SATELLITE_SIGNAL_STRONG_THRESHOLD -> strong++
+                    value >= SATELLITE_SIGNAL_MEDIUM_THRESHOLD -> medium++
+                    value > 0 -> {
+                        when {
+                            value >= 3 -> strong++
+                            value == 2 -> medium++
+                            value == 1 -> weak++
+                            else -> weak++
+                        }
+                    }
+                }
+            }
+        return SatelliteSignalBreakdown(strong, medium, weak)
     }
 
     private fun broadcastLocation(
         location: Location,
         satellites: Int,
         provider: String?,
-        locationAge: Float
+        locationAge: Float,
+        signalBreakdown: SatelliteSignalBreakdown
     ) {
         val intent =
             Intent(ACTION_LOCATION_UPDATE).apply {
@@ -426,6 +517,9 @@ class GNSSClientService :
                 putExtra(EXTRA_SATELLITES, satellites)
                 putExtra(EXTRA_PROVIDER, provider ?: location.provider)
                 putExtra(EXTRA_LOCATION_AGE, locationAge)
+                putExtra(EXTRA_SATELLITES_STRONG, signalBreakdown.strong)
+                putExtra(EXTRA_SATELLITES_MEDIUM, signalBreakdown.medium)
+                putExtra(EXTRA_SATELLITES_WEAK, signalBreakdown.weak)
             }
         sendBroadcast(intent)
     }
@@ -446,6 +540,16 @@ class GNSSClientService :
         sendBroadcast(intent)
     }
 
+    private fun broadcastDeviceSettings() {
+        val intent = Intent(ACTION_DEVICE_SETTINGS_CHANGED)
+        intent.putExtra(EXTRA_AP_CONTROL_KNOWN, apControlEnabled != null)
+        intent.putExtra(EXTRA_BRIDGE_MODE_KNOWN, bridgeModeEnabled != null)
+        apControlEnabled?.let { intent.putExtra(EXTRA_AP_CONTROL_ENABLED, it) }
+        bridgeModeEnabled?.let { intent.putExtra(EXTRA_BRIDGE_MODE_ENABLED, it) }
+        intent.putExtra(EXTRA_AP_SSID_HINT, STATIC_AP_SSID)
+        sendBroadcast(intent)
+    }
+
     private fun updateNotification() {
         val ageSeconds =
             if (lastUpdateTime > 0) {
@@ -460,6 +564,19 @@ class GNSSClientService :
                 ageSeconds
             )
         notificationManager.notify(NotificationUtils.NOTIFICATION_ID, notification)
+    }
+
+    private fun requestDeviceSettingsRead() {
+        val manager = connectionManager ?: return
+        if (!isConnected) {
+            Log.d(TAG, "Skipping device settings read: BLE not connected")
+            return
+        }
+        manager.readCharacteristic(BleUuids.CHAR_AP_CONTROL_UUID)
+        handler.postDelayed(
+            { manager.readCharacteristic(BleUuids.CHAR_MODE_CONTROL_UUID) },
+            200
+        )
     }
 
     private fun hasMockLocationPermission(): Boolean {
@@ -494,10 +611,16 @@ class GNSSClientService :
 
     override fun onScanFailed(errorCode: Int) {
         Log.w(TAG, "BLE scan failed: $errorCode")
+        if (AppPrefs.isMockEnabled(this) && !isConnected) {
+            scheduleRescan()
+        }
     }
 
     override fun onScanStopped(foundDevice: Boolean) {
         Log.d(TAG, "BLE scan stopped. Device found: $foundDevice")
+        if (!foundDevice && AppPrefs.isMockEnabled(this) && !isConnected) {
+            scheduleRescan()
+        }
     }
     // endregion
 
@@ -510,6 +633,7 @@ class GNSSClientService :
     override fun onConnected(device: BluetoothDevice) {
         Log.i(TAG, "Connected to BLE device ${device.address}")
         isConnected = true
+        handler.removeCallbacks(rescanRunnable)
         wakeLock?.let {
             if (!it.isHeld) {
                 it.acquire()
@@ -518,6 +642,7 @@ class GNSSClientService :
         connectionManager?.pollTelemetry()
         startReceivingLocationUpdates()
         broadcastConnectionState(true)
+        broadcastDeviceSettings()
         updateNotification()
     }
 
@@ -531,14 +656,18 @@ class GNSSClientService :
         }
         stopReceivingLocationUpdates()
         broadcastConnectionState(false)
+        apControlEnabled = null
+        bridgeModeEnabled = null
+        broadcastDeviceSettings()
         updateNotification()
         if (AppPrefs.isMockEnabled(this)) {
-            handler.postDelayed({ startBleWorkflow() }, RESCAN_DELAY_MS)
+            scheduleRescan()
         }
     }
 
     override fun onServicesDiscovered(device: BluetoothDevice) {
         Log.d(TAG, "Services discovered on ${device.address}")
+        requestDeviceSettingsRead()
     }
 
     override fun onError(message: String) {
@@ -588,6 +717,24 @@ class GNSSClientService :
         Log.d(TAG, "Device status: $status")
     }
 
+    override fun onApControlChanged(enabled: Boolean) {
+        val previous = apControlEnabled
+        apControlEnabled = enabled
+        if (previous != enabled) {
+            Log.i(TAG, "AP control state updated to $enabled")
+        }
+        broadcastDeviceSettings()
+    }
+
+    override fun onBridgeModeChanged(enabled: Boolean) {
+        val previous = bridgeModeEnabled
+        bridgeModeEnabled = enabled
+        if (previous != enabled) {
+            Log.i(TAG, "Bridge mode state updated to $enabled")
+        }
+        broadcastDeviceSettings()
+    }
+
     override fun onTtffReceived(ttffSeconds: Long) {
         this.ttffSeconds = ttffSeconds
     }
@@ -600,16 +747,25 @@ class GNSSClientService :
             "com.g992.blegpsmocker.LOCATION_UPDATE"
         const val ACTION_MOCK_LOCATION_STATUS =
             "com.g992.blegpsmocker.MOCK_LOCATION_STATUS"
+        const val ACTION_DEVICE_SETTINGS_CHANGED =
+            "com.g992.blegpsmocker.DEVICE_SETTINGS_CHANGED"
 
         const val EXTRA_CONNECTED = "connected"
         const val EXTRA_LOCATION = "location"
         const val EXTRA_SATELLITES = "satellites"
+        const val EXTRA_SATELLITES_STRONG = "satellites_strong"
+        const val EXTRA_SATELLITES_MEDIUM = "satellites_medium"
+        const val EXTRA_SATELLITES_WEAK = "satellites_weak"
         const val EXTRA_PROVIDER = "provider"
         const val EXTRA_LOCATION_AGE = "locationAge"
         const val EXTRA_MESSAGE = "message"
+        const val EXTRA_AP_CONTROL_ENABLED = "ap_control_enabled"
+        const val EXTRA_BRIDGE_MODE_ENABLED = "bridge_mode_enabled"
+        const val EXTRA_AP_SSID_HINT = "ap_ssid_hint"
+        const val EXTRA_AP_CONTROL_KNOWN = "ap_control_known"
+        const val EXTRA_BRIDGE_MODE_KNOWN = "bridge_mode_known"
 
-        private val providerCandidates =
-            listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+        private val providerCandidates = listOf(LocationManager.GPS_PROVIDER)
 
         @Volatile
         private var serviceRunning = false
@@ -625,5 +781,14 @@ class GNSSClientService :
         fun setServiceEnabled(context: Context, enabled: Boolean) {
             AppPrefs.setMockEnabled(context, enabled)
         }
+    }
+
+    private data class SatelliteSignalBreakdown(
+        val strong: Int = 0,
+        val medium: Int = 0,
+        val weak: Int = 0
+    ) {
+        val total: Int
+            get() = strong + medium + weak
     }
 }

@@ -8,6 +8,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.Drawable;
 import android.location.Location;
 import android.os.Build;
 import android.os.Bundle;
@@ -15,16 +17,25 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.IBinder;
 import android.provider.Settings;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
 import android.view.View;
-import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.ColorRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.graphics.drawable.DrawableCompat;
+
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.switchmaterial.SwitchMaterial;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -49,21 +60,30 @@ public class MainActivity extends AppCompatActivity {
             Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
     };
 
-    private TextView statusText;
-    private TextView connectionText;
-    private TextView dataAgeText;
+    private TextView statusBadge;
+    private TextView connectionBadge;
+    private TextView dataAgeBadge;
     private TextView locationText;
-    private TextView satellitesText;
-    private TextView providerText;
-    private TextView ageText;
+    private TextView satellitesBadge;
+    private TextView providerBadge;
+    private TextView ageBadge;
     private TextView additionalInfoText;
     private TextView lastUpdateText;
-    private Button requestPermissionsButton;
+    private MaterialButton requestPermissionsButton;
     private TextView permissionsStatusText;
     private TextView mockLocationStatusText;
-    private Button startServiceButton;
-    private Button stopServiceButton;
+    private MaterialButton serviceToggleButton;
     private TextView serviceStatusText;
+    private SwitchMaterial apHotspotSwitch;
+    private SwitchMaterial bridgeModeSwitch;
+
+    @Nullable
+    private Boolean apControlState = null;
+    @Nullable
+    private Boolean bridgeModeState = null;
+    private String apSsidHint = null;
+    private boolean suppressApSwitchChange = false;
+    private boolean suppressBridgeSwitchChange = false;
 
     private GNSSClientService clientService;
     private boolean serviceBound = false;
@@ -92,11 +112,25 @@ public class MainActivity extends AppCompatActivity {
                     Location location = intent.getParcelableExtra(GNSSClientService.EXTRA_LOCATION);
                     int satellites =
                             intent.getIntExtra(GNSSClientService.EXTRA_SATELLITES, 0);
+                    int strongSatellites =
+                            intent.getIntExtra(GNSSClientService.EXTRA_SATELLITES_STRONG, 0);
+                    int mediumSatellites =
+                            intent.getIntExtra(GNSSClientService.EXTRA_SATELLITES_MEDIUM, 0);
+                    int weakSatellites =
+                            intent.getIntExtra(GNSSClientService.EXTRA_SATELLITES_WEAK, 0);
                     String provider =
                             intent.getStringExtra(GNSSClientService.EXTRA_PROVIDER);
                     float locationAge =
                             intent.getFloatExtra(GNSSClientService.EXTRA_LOCATION_AGE, 0f);
-                    updateLocationInfo(location, satellites, provider, locationAge);
+                    updateLocationInfo(
+                            location,
+                            satellites,
+                            provider,
+                            locationAge,
+                            strongSatellites,
+                            mediumSatellites,
+                            weakSatellites
+                    );
                 }
             };
 
@@ -109,6 +143,28 @@ public class MainActivity extends AppCompatActivity {
                     }
                     String message = intent.getStringExtra(GNSSClientService.EXTRA_MESSAGE);
                     updateMockLocationStatus(message);
+                }
+            };
+
+    private final BroadcastReceiver deviceSettingsReceiver =
+            new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (!GNSSClientService.ACTION_DEVICE_SETTINGS_CHANGED.equals(intent.getAction())) {
+                        return;
+                    }
+                    boolean apKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_AP_CONTROL_KNOWN, false);
+                    Boolean apState = apKnown
+                            ? intent.getBooleanExtra(GNSSClientService.EXTRA_AP_CONTROL_ENABLED, false)
+                            : null;
+                    boolean bridgeKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_BRIDGE_MODE_KNOWN, false);
+                    Boolean bridgeState = bridgeKnown
+                            ? intent.getBooleanExtra(GNSSClientService.EXTRA_BRIDGE_MODE_ENABLED, false)
+                            : null;
+                    String ssid = intent.getStringExtra(GNSSClientService.EXTRA_AP_SSID_HINT);
+                    applyDeviceSettingsUpdate(apState, true, bridgeState, true, ssid);
                 }
             };
 
@@ -126,9 +182,18 @@ public class MainActivity extends AppCompatActivity {
                             clientService.getLastReceivedLocation(),
                             0,
                             null,
-                            0f
+                            0f,
+                            0,
+                            0,
+                            0
                     );
                     updateServiceStatus();
+                    applyDeviceSettingsUpdate(
+                            clientService.getApControlState(),
+                            clientService.getBridgeModeState(),
+                            clientService.getApControlSsidHint()
+                    );
+                    clientService.refreshDeviceSettings();
                 }
 
                 @Override
@@ -141,6 +206,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
         setContentView(R.layout.activity_main);
 
         initializeViews();
@@ -149,6 +215,12 @@ public class MainActivity extends AppCompatActivity {
 
         updatePermissionsStatus();
         startUIUpdates();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshDeviceSettingsOnFocus();
     }
 
     @Override
@@ -161,41 +233,62 @@ public class MainActivity extends AppCompatActivity {
         unregisterReceiver(connectionReceiver);
         unregisterReceiver(locationReceiver);
         unregisterReceiver(mockLocationStatusReceiver);
+        unregisterReceiver(deviceSettingsReceiver);
         uiHandler.removeCallbacksAndMessages(null);
     }
 
     private void initializeViews() {
-        statusText = findViewById(R.id.statusText);
-        connectionText = findViewById(R.id.connectionText);
-        dataAgeText = findViewById(R.id.dataAgeText);
+        statusBadge = findViewById(R.id.statusBadge);
+        connectionBadge = findViewById(R.id.connectionBadge);
+        dataAgeBadge = findViewById(R.id.dataAgeBadge);
         locationText = findViewById(R.id.locationText);
-        satellitesText = findViewById(R.id.satellitesText);
-        providerText = findViewById(R.id.providerText);
-        ageText = findViewById(R.id.ageText);
+        satellitesBadge = findViewById(R.id.satellitesBadge);
+        providerBadge = findViewById(R.id.providerBadge);
+        ageBadge = findViewById(R.id.ageBadge);
         additionalInfoText = findViewById(R.id.additionalInfoText);
         lastUpdateText = findViewById(R.id.lastUpdateText);
         requestPermissionsButton = findViewById(R.id.requestPermissionsButton);
         permissionsStatusText = findViewById(R.id.permissionsStatusText);
         mockLocationStatusText = findViewById(R.id.mockLocationStatusText);
-        startServiceButton = findViewById(R.id.startServiceButton);
-        stopServiceButton = findViewById(R.id.stopServiceButton);
+        serviceToggleButton = findViewById(R.id.serviceToggleButton);
         serviceStatusText = findViewById(R.id.serviceStatusText);
+        apHotspotSwitch = findViewById(R.id.apHotspotSwitch);
+        bridgeModeSwitch = findViewById(R.id.bridgeModeSwitch);
 
-        statusText.setText(getString(R.string.status_unknown));
-        connectionText.setText(getString(R.string.connection_unknown));
-        dataAgeText.setText(getString(R.string.data_age_unknown));
-        locationText.setText(getString(R.string.location_unknown));
-        satellitesText.setText(getString(R.string.satellites_unknown));
-        providerText.setText(getString(R.string.provider_unknown));
-        ageText.setText(getString(R.string.age_unknown));
-        additionalInfoText.setText(getString(R.string.additional_info_unknown));
-        lastUpdateText.setText(getString(R.string.movement_last_update_unknown));
+        statusBadge.setText(getString(R.string.unknown));
+        connectionBadge.setText(getString(R.string.unknown));
+        dataAgeBadge.setText(getString(R.string.unknown));
+        applyBadgeStyle(statusBadge, R.color.chip_neutral, R.color.chip_text_light);
+        applyBadgeStyle(connectionBadge, R.color.chip_neutral, R.color.chip_text_light);
+        applyBadgeStyle(dataAgeBadge, R.color.chip_neutral, R.color.chip_text_light);
+        resetLocationUi();
 
         requestPermissionsButton.setOnClickListener(v -> requestPermissions());
-        startServiceButton.setOnClickListener(v -> startGNSSService());
-        stopServiceButton.setOnClickListener(v -> stopGNSSService());
-
+        serviceToggleButton.setOnClickListener(
+                v -> {
+                    if (GNSSClientService.isServiceEnabled(this)) {
+                        stopGNSSService();
+                    } else {
+                        startGNSSService();
+                    }
+                });
+        mockLocationStatusText.setVisibility(View.GONE);
+        apHotspotSwitch.setEnabled(false);
+        bridgeModeSwitch.setEnabled(false);
+        apHotspotSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (suppressApSwitchChange) {
+                return;
+            }
+            handleApSwitchToggle(isChecked);
+        });
+        bridgeModeSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (suppressBridgeSwitchChange) {
+                return;
+            }
+            handleBridgeSwitchToggle(isChecked);
+        });
         updateServiceStatus();
+        updateDeviceSettingsUi();
     }
 
     private void startAndBindService() {
@@ -211,15 +304,18 @@ public class MainActivity extends AppCompatActivity {
         IntentFilter connectionFilter = new IntentFilter(GNSSClientService.ACTION_CONNECTION_CHANGED);
         IntentFilter locationFilter = new IntentFilter(GNSSClientService.ACTION_LOCATION_UPDATE);
         IntentFilter mockStatusFilter = new IntentFilter(GNSSClientService.ACTION_MOCK_LOCATION_STATUS);
+        IntentFilter settingsFilter = new IntentFilter(GNSSClientService.ACTION_DEVICE_SETTINGS_CHANGED);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(connectionReceiver, connectionFilter, Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(locationReceiver, locationFilter, Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(mockLocationStatusReceiver, mockStatusFilter, Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(deviceSettingsReceiver, settingsFilter, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(connectionReceiver, connectionFilter);
             registerReceiver(locationReceiver, locationFilter);
             registerReceiver(mockLocationStatusReceiver, mockStatusFilter);
+            registerReceiver(deviceSettingsReceiver, settingsFilter);
         }
     }
 
@@ -249,19 +345,20 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateServiceStatus() {
         boolean enabled = GNSSClientService.isServiceEnabled(this);
-        if (enabled) {
-            startServiceButton.setEnabled(false);
-            stopServiceButton.setEnabled(true);
-            serviceStatusText.setText(R.string.service_running);
-            serviceStatusText.setTextColor(
-                    ContextCompat.getColor(this, android.R.color.holo_green_dark));
-        } else {
-            startServiceButton.setEnabled(true);
-            stopServiceButton.setEnabled(false);
-            serviceStatusText.setText(R.string.service_stopped);
-            serviceStatusText.setTextColor(
-                    ContextCompat.getColor(this, android.R.color.holo_red_dark));
-        }
+        serviceStatusText.setText(enabled ? R.string.service_running : R.string.service_stopped);
+        int statusColorRes = enabled ? R.color.chip_success : R.color.chip_error;
+        serviceStatusText.setTextColor(ContextCompat.getColor(this, statusColorRes));
+
+        int toggleTextRes =
+                enabled ? R.string.button_stop_service : R.string.button_start_service;
+        int backgroundColorRes = enabled ? R.color.chip_error : R.color.md_primary;
+        int textColorRes = enabled ? R.color.chip_text_light : R.color.md_on_primary;
+
+        serviceToggleButton.setText(toggleTextRes);
+        serviceToggleButton.setBackgroundTintList(
+                ColorStateList.valueOf(ContextCompat.getColor(this, backgroundColorRes))
+        );
+        serviceToggleButton.setTextColor(ContextCompat.getColor(this, textColorRes));
     }
 
     private void requestPermissions() {
@@ -308,7 +405,7 @@ public class MainActivity extends AppCompatActivity {
         if (allGranted) {
             permissionsStatusText.setText(R.string.all_permissions_granted);
             permissionsStatusText.setTextColor(
-                    ContextCompat.getColor(this, android.R.color.holo_green_dark));
+                    ContextCompat.getColor(this, R.color.chip_success));
             requestPermissionsButton.setVisibility(View.GONE);
         } else {
             String text =
@@ -318,7 +415,7 @@ public class MainActivity extends AppCompatActivity {
                     );
             permissionsStatusText.setText(text);
             permissionsStatusText.setTextColor(
-                    ContextCompat.getColor(this, android.R.color.holo_red_dark));
+                    ContextCompat.getColor(this, R.color.chip_error));
             requestPermissionsButton.setVisibility(View.VISIBLE);
         }
     }
@@ -394,44 +491,307 @@ public class MainActivity extends AppCompatActivity {
     private void updateConnectionStatus(boolean connected) {
         runOnUiThread(
                 () -> {
-                    statusText.setText(
-                            String.format(
-                                    getString(R.string.status_format),
-                                    getString(R.string.app_name),
-                                    getString(connected ? R.string.connected : R.string.disconnected)
-                            )
-                    );
+                    String statusValue =
+                            getString(connected ? R.string.connected : R.string.disconnected);
+                    statusBadge.setText(statusValue);
+
+                    String connectionValue =
+                            getString(
+                                    connected
+                                            ? R.string.connection_status_connected
+                                            : R.string.connection_status_disconnected
+                            );
+                    connectionBadge.setText(connectionValue);
+
                     if (connected) {
-                        connectionText.setText(
-                                String.format(
-                                        getString(R.string.connection_status),
-                                        getString(R.string.connection_status_connected)
-                                )
-                        );
-                        connectionText.setTextColor(
-                                ContextCompat.getColor(this, android.R.color.holo_green_dark));
+                        applyBadgeStyle(statusBadge, R.color.chip_success, R.color.chip_text_dark);
+                        applyBadgeStyle(connectionBadge, R.color.chip_success, R.color.chip_text_dark);
                     } else {
-                        connectionText.setText(
-                                String.format(
-                                        getString(R.string.connection_status),
-                                        getString(R.string.connection_status_disconnected)
-                                )
-                        );
-                        connectionText.setTextColor(
-                                ContextCompat.getColor(this, android.R.color.holo_red_dark));
-                        locationText.setText(getString(R.string.location_unknown));
-                        satellitesText.setText(getString(R.string.satellites_unknown));
-                        providerText.setText(getString(R.string.provider_unknown));
-                        ageText.setText(getString(R.string.age_unknown));
+                        applyBadgeStyle(statusBadge, R.color.chip_error, R.color.chip_text_light);
+                        applyBadgeStyle(connectionBadge, R.color.chip_error, R.color.chip_text_light);
+                        applyBadgeStyle(dataAgeBadge, R.color.chip_neutral, R.color.chip_text_light);
+                        dataAgeBadge.setText(getString(R.string.unknown));
+                        resetLocationUi();
                     }
+                    updateDeviceSettingsUi();
                 });
+    }
+
+    private void resetLocationUi() {
+        locationText.setText(getString(R.string.location_unknown));
+        satellitesBadge.setText(getString(R.string.unknown));
+        providerBadge.setText(getString(R.string.unknown));
+        ageBadge.setText(getString(R.string.unknown));
+        additionalInfoText.setText(getString(R.string.additional_info_unknown));
+        lastUpdateText.setText(getString(R.string.movement_last_update_unknown));
+        applyBadgeStyle(satellitesBadge, R.color.chip_neutral, R.color.chip_text_light);
+        applyBadgeStyle(providerBadge, R.color.chip_neutral, R.color.chip_text_light);
+        applyBadgeStyle(ageBadge, R.color.chip_neutral, R.color.chip_text_light);
+    }
+
+    private void refreshDeviceSettingsOnFocus() {
+        if (serviceBound && clientService != null) {
+            clientService.refreshDeviceSettings();
+        }
+    }
+
+    private void applyBadgeStyle(TextView badge, @ColorRes int backgroundColorRes, @ColorRes int textColorRes) {
+        Drawable background = badge.getBackground();
+        if (background != null) {
+            Drawable wrapped = DrawableCompat.wrap(background.mutate());
+            DrawableCompat.setTint(wrapped, ContextCompat.getColor(this, backgroundColorRes));
+            badge.setBackground(wrapped);
+        } else {
+            badge.setBackgroundColor(ContextCompat.getColor(this, backgroundColorRes));
+        }
+        badge.setTextColor(ContextCompat.getColor(this, textColorRes));
+    }
+
+    private void applyDeviceSettingsUpdate(@Nullable Boolean apState, boolean updateAp, @Nullable Boolean bridgeState, boolean updateBridge, @Nullable String ssid) {
+        runOnUiThread(
+                () -> {
+                    if (updateAp) {
+                        apControlState = apState;
+                    }
+                    if (updateBridge) {
+                        bridgeModeState = bridgeState;
+                    }
+                    if (ssid != null && !ssid.isEmpty()) {
+                        apSsidHint = ssid;
+                    }
+                    updateDeviceSettingsUi();
+                });
+    }
+
+    private void applyDeviceSettingsUpdate(@Nullable Boolean apState, @Nullable Boolean bridgeState, @Nullable String ssid) {
+        applyDeviceSettingsUpdate(apState, true, bridgeState, true, ssid);
+    }
+
+    private void updateDeviceSettingsUi() {
+        if (apHotspotSwitch == null || bridgeModeSwitch == null) {
+            return;
+        }
+        boolean connected = serviceBound && clientService != null && clientService.isConnectedToServer();
+
+        suppressApSwitchChange = true;
+        boolean apKnown = apControlState != null;
+        apHotspotSwitch.setEnabled(connected);
+        if (apKnown) {
+            apHotspotSwitch.setChecked(Boolean.TRUE.equals(apControlState));
+        }
+        suppressApSwitchChange = false;
+
+        suppressBridgeSwitchChange = true;
+        boolean bridgeKnown = bridgeModeState != null;
+        bridgeModeSwitch.setEnabled(connected);
+        if (bridgeKnown) {
+            bridgeModeSwitch.setChecked(Boolean.TRUE.equals(bridgeModeState));
+        }
+        suppressBridgeSwitchChange = false;
+    }
+
+    private boolean isServiceReadyForSettings() {
+        return serviceBound && clientService != null && clientService.isConnectedToServer();
+    }
+
+    private String getApSsidForDialog() {
+        if (apSsidHint != null && !apSsidHint.isEmpty()) {
+            return apSsidHint;
+        }
+        if (clientService != null) {
+            String serviceHint = clientService.getApControlSsidHint();
+            if (serviceHint != null && !serviceHint.isEmpty()) {
+                apSsidHint = serviceHint;
+                return serviceHint;
+            }
+        }
+        return getString(R.string.settings_ap_default_ssid);
+    }
+
+    private void handleApSwitchToggle(boolean desiredState) {
+        if (!isServiceReadyForSettings()) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            updateDeviceSettingsUi();
+            return;
+        }
+        boolean currentState = apControlState != null && apControlState;
+        if (desiredState == currentState) {
+            return;
+        }
+        if (desiredState) {
+            suppressApSwitchChange = true;
+            apHotspotSwitch.setChecked(currentState);
+            suppressApSwitchChange = false;
+
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.settings_ap_dialog_title)
+                    .setMessage(getString(R.string.settings_ap_dialog_message, getApSsidForDialog()))
+                    .setPositiveButton(
+                            R.string.dialog_ok,
+                            (dialog, which) -> {
+                                if (clientService == null) {
+                                    updateDeviceSettingsUi();
+                                    return;
+                                }
+                                boolean accepted = clientService.requestApControlChange(true);
+                                if (!accepted) {
+                                    Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                                    updateDeviceSettingsUi();
+                                    return;
+                                }
+                                uiHandler.postDelayed(
+                                        () -> {
+                                            if (clientService != null) {
+                                                clientService.refreshDeviceSettings();
+                                            }
+                                            updateDeviceSettingsUi();
+                                        },
+                                        500
+                                );
+                            })
+                    .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> updateDeviceSettingsUi())
+                    .setOnCancelListener(dialog -> updateDeviceSettingsUi())
+                    .show();
+        } else {
+            boolean accepted = clientService != null && clientService.requestApControlChange(false);
+            if (!accepted) {
+                Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                updateDeviceSettingsUi();
+                return;
+            }
+            uiHandler.postDelayed(
+                    () -> {
+                        if (clientService != null) {
+                            clientService.refreshDeviceSettings();
+                        }
+                        updateDeviceSettingsUi();
+                    },
+                    500
+            );
+        }
+    }
+
+    private void handleBridgeSwitchToggle(boolean desiredState) {
+        if (!isServiceReadyForSettings()) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            updateDeviceSettingsUi();
+            return;
+        }
+        boolean currentState = bridgeModeState != null && bridgeModeState;
+        if (desiredState == currentState) {
+            return;
+        }
+        if (desiredState) {
+            suppressBridgeSwitchChange = true;
+            bridgeModeSwitch.setChecked(currentState);
+            suppressBridgeSwitchChange = false;
+
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.settings_bridge_dialog_title)
+                    .setMessage(R.string.settings_bridge_dialog_message)
+                    .setPositiveButton(
+                            R.string.dialog_ok,
+                            (dialog, which) -> {
+                                if (clientService == null) {
+                                    updateDeviceSettingsUi();
+                                    return;
+                                }
+                                boolean accepted = clientService.requestBridgeModeChange(true);
+                                if (!accepted) {
+                                    Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                                    updateDeviceSettingsUi();
+                                    return;
+                                }
+                                uiHandler.postDelayed(
+                                        () -> {
+                                            if (clientService != null) {
+                                                clientService.refreshDeviceSettings();
+                                            }
+                                            updateDeviceSettingsUi();
+                                        },
+                                        500
+                                );
+                            })
+                    .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> updateDeviceSettingsUi())
+                    .setOnCancelListener(dialog -> updateDeviceSettingsUi())
+                    .show();
+        } else {
+            boolean accepted = clientService != null && clientService.requestBridgeModeChange(false);
+            if (!accepted) {
+                Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                updateDeviceSettingsUi();
+                return;
+            }
+            uiHandler.postDelayed(
+                    () -> {
+                        if (clientService != null) {
+                            clientService.refreshDeviceSettings();
+                        }
+                        updateDeviceSettingsUi();
+                    },
+                    500
+            );
+        }
+    }
+
+    private CharSequence buildSatelliteBadgeText(
+            int total,
+            int strongSatellites,
+            int mediumSatellites,
+            int weakSatellites
+    ) {
+        int strong = Math.max(strongSatellites, 0);
+        int medium = Math.max(mediumSatellites, 0);
+        int weak = Math.max(weakSatellites, 0);
+        int breakdownSum = strong + medium + weak;
+        int effectiveTotal = total > 0 ? total : breakdownSum;
+        if (effectiveTotal < 0) {
+            effectiveTotal = 0;
+        }
+        SpannableStringBuilder builder = new SpannableStringBuilder();
+        builder.append(String.valueOf(effectiveTotal));
+        if (breakdownSum > 0) {
+            builder.append(' ');
+            builder.append('(');
+            int strongStart = builder.length();
+            builder.append(String.valueOf(strong));
+            builder.setSpan(
+                    new ForegroundColorSpan(ContextCompat.getColor(this, R.color.chip_success)),
+                    strongStart,
+                    builder.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            );
+            builder.append('/');
+            int mediumStart = builder.length();
+            builder.append(String.valueOf(medium));
+            builder.setSpan(
+                    new ForegroundColorSpan(ContextCompat.getColor(this, R.color.chip_warning)),
+                    mediumStart,
+                    builder.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            );
+            builder.append('/');
+            int weakStart = builder.length();
+            builder.append(String.valueOf(weak));
+            builder.setSpan(
+                    new ForegroundColorSpan(ContextCompat.getColor(this, R.color.chip_error)),
+                    weakStart,
+                    builder.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            );
+            builder.append(')');
+        }
+        return builder;
     }
 
     private void updateLocationInfo(
             @Nullable Location location,
             int satellites,
             @Nullable String provider,
-            float locationAge
+            float locationAge,
+            int strongSatellites,
+            int mediumSatellites,
+            int weakSatellites
     ) {
         if (location == null) {
             return;
@@ -467,22 +827,23 @@ public class MainActivity extends AppCompatActivity {
                     }
                     locationText.setText(builder.toString());
 
-                    satellitesText.setText(
-                            String.format(getString(R.string.satellites_status), satellites));
-
-                    providerText.setText(
-                            String.format(
-                                    getString(R.string.provider_status),
-                                    provider != null ? provider : getString(R.string.unknown)
+                    satellitesBadge.setText(
+                            buildSatelliteBadgeText(
+                                    satellites,
+                                    strongSatellites,
+                                    mediumSatellites,
+                                    weakSatellites
                             )
                     );
+                    applyBadgeStyle(satellitesBadge, R.color.chip_neutral, R.color.chip_text_light);
 
-                    ageText.setText(
-                            String.format(
-                                    getString(R.string.age_status),
-                                    String.format(getString(R.string.age_format), locationAge)
-                            )
+                    providerBadge.setText(provider != null ? provider : getString(R.string.unknown));
+                    applyBadgeStyle(providerBadge, R.color.chip_neutral, R.color.chip_text_light);
+
+                    ageBadge.setText(
+                            String.format(getString(R.string.age_format), locationAge)
                     );
+                    applyBadgeStyle(ageBadge, R.color.chip_neutral, R.color.chip_text_light);
 
                     SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
                     lastUpdateText.setText(
@@ -520,6 +881,8 @@ public class MainActivity extends AppCompatActivity {
                     }
                     if (infoBuilder.length() > 0) {
                         additionalInfoText.setText(infoBuilder.toString());
+                    } else {
+                        additionalInfoText.setText(getString(R.string.additional_info_unknown));
                     }
                 });
     }
@@ -558,42 +921,34 @@ public class MainActivity extends AppCompatActivity {
                 long ageSeconds = (System.currentTimeMillis() - lastUpdate) / 1000;
                 runOnUiThread(
                         () -> {
+                            String ageDisplay;
+                            int backgroundRes;
                             if (ageSeconds < 60) {
-                                dataAgeText.setText(
+                                ageDisplay =
                                         String.format(
-                                                getString(R.string.data_age_status),
-                                                String.format(
-                                                        getString(R.string.data_age_format_s),
-                                                        ageSeconds
-                                                )
-                                        )
-                                );
-                                dataAgeText.setTextColor(
-                                        ContextCompat.getColor(
-                                                this,
-                                                android.R.color.holo_green_dark
-                                        )
-                                );
+                                                getString(R.string.data_age_format_s),
+                                                ageSeconds
+                                        );
+                                backgroundRes = R.color.chip_success;
                             } else {
-                                dataAgeText.setText(
+                                ageDisplay =
                                         String.format(
-                                                getString(R.string.data_age_status),
-                                                String.format(
-                                                        getString(R.string.data_age_format_ms),
-                                                        ageSeconds / 60,
-                                                        ageSeconds % 60
-                                                )
-                                        )
-                                );
-                                dataAgeText.setTextColor(
-                                        ContextCompat.getColor(
-                                                this,
-                                                android.R.color.holo_orange_dark
-                                        )
-                                );
+                                                getString(R.string.data_age_format_ms),
+                                                ageSeconds / 60,
+                                                ageSeconds % 60
+                                        );
+                                backgroundRes = R.color.chip_warning;
                             }
+                            dataAgeBadge.setText(ageDisplay);
+                            applyBadgeStyle(dataAgeBadge, backgroundRes, R.color.chip_text_dark);
                         });
+                return;
             }
         }
+        runOnUiThread(
+                () -> {
+                    dataAgeBadge.setText(getString(R.string.unknown));
+                    applyBadgeStyle(dataAgeBadge, R.color.chip_neutral, R.color.chip_text_light);
+                });
     }
 }

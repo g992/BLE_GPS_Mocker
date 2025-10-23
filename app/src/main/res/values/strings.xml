@@ -8,6 +8,10 @@
     <string name="disconnected">не подключено</string>
     <string name="status_unknown">Статус: неизвестно</string>
     <string name="connection_unknown">Статус соединения: неизвестно</string>
+    <string name="status_section_title">Текущее состояние</string>
+    <string name="status_badge_label_app">BLE GPS</string>
+    <string name="status_badge_label_connection">Соединение</string>
+    <string name="status_badge_label_data_age">Данные</string>
 
     <!-- Service controls -->
     <string name="service_running">Сервис работает</string>
@@ -27,11 +31,11 @@
     <string name="data_age_format_ms">%1$d мин %2$d с назад</string>
     <string name="data_age_unknown">Данные: неизвестно</string>
 
-    <string name="location_status">Координаты: %1$s</string>
-    <string name="location_unknown">Координаты: неизвестно</string>
-    <string name="location_format">%.6f, %.6f</string>
-    <string name="altitude_format">  Высота: %.1f м</string>
-    <string name="location_accuracy_format">  Точность: %.1f м</string>
+    <string name="location_status">Координаты: %1$s  </string>
+    <string name="location_unknown">Координаты: неизвестно  </string>
+    <string name="location_format">%.6f, %.6f  </string>
+    <string name="altitude_format">  Высота: %.1f м  </string>
+    <string name="location_accuracy_format">  Точность: %.1f м  </string>
 
     <string name="satellites_status">Спутников: %1$d</string>
     <string name="satellites_unknown">Спутников: 0</string>
@@ -48,8 +52,27 @@
     <string name="movement_bearing">Курс: %1$s</string>
     <string name="bearing_format">%.1f°</string>
     <string name="additional_info_unknown">Скорость: неизвестно  Курс: неизвестно</string>
+    <string name="location_section_title">Позиция и спутники</string>
+    <string name="location_badge_label_satellites">Спутники</string>
+    <string name="location_badge_label_provider">Провайдер</string>
+    <string name="location_badge_label_age">Возраст фикса</string>
+
+    <!-- Device settings -->
+    <string name="settings_section_title">Настройки устройства</string>
+    <string name="settings_ap_toggle_label">Точка доступа для настройки Wi‑Fi</string>
+    <string name="settings_bridge_toggle_label">Режим USB GPS моста</string>
+    <string name="settings_ap_dialog_title">Включение точки доступа</string>
+    <string name="settings_ap_dialog_message">Устройство будет доступно как точка доступа %1$s. Подключитесь к ней и подключите ESP к вашей сети, чтобы головное устройство и модуль оказались в одной Wi‑Fi сети.</string>
+    <string name="settings_ap_default_ssid">GPS-C3-xxxx</string>
+    <string name="settings_bridge_dialog_title">Переключение в режим моста</string>
+    <string name="settings_bridge_dialog_message">ESP перезапустится и станет доступен как USB GPS модем. Передача навигации по Wi‑Fi и BLE будет недоступна, пока вы не выключите режим моста.</string>
+    <string name="dialog_ok">ОК</string>
+    <string name="dialog_cancel">Отмена</string>
+    <string name="settings_write_failed">Не удалось изменить настройку. Попробуйте ещё раз.</string>
+    <string name="settings_not_connected">Устройство не подключено</string>
 
     <!-- Permissions -->
+    <string name="permissions_section_title">Разрешения</string>
     <string name="all_permissions_granted">Все разрешения выданы</string>
     <string name="missing_permissions">Отсутствуют разрешения: %1$s</string>
     <string name="missing_permissions_placeholder">Необходимы разрешения</string>

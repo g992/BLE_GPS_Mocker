@@ -1,144 +1,398 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:background="@color/md_background"
+    android:fillViewport="true"
+    android:paddingTop="16dp"
+    android:paddingBottom="16dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
         android:gravity="center_horizontal">
 
-        <TextView
-            android:id="@+id/serviceStatusText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/service_stopped"
-            android:textAppearance="?android:attr/textAppearanceLarge"
-            android:textStyle="bold"
-            android:paddingBottom="16dp" />
-
-        <LinearLayout
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_horizontal"
-            android:paddingBottom="16dp">
+            android:layout_marginBottom="16dp"
+            android:padding="20dp"
+            app:cardBackgroundColor="@color/md_surface_high"
+            app:cardCornerRadius="20dp"
+            app:cardUseCompatPadding="true">
 
-            <Button
-                android:id="@+id/startServiceButton"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/button_start_service" />
+                android:layout_margin="10dp"
+                android:orientation="vertical">
 
-            <View
-                android:layout_width="16dp"
-                android:layout_height="0dp" />
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/serviceStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginEnd="8dp"
+                    android:text="@string/service_stopped"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="40sp"
+                    android:textStyle="bold" />
 
-            <Button
-                android:id="@+id/stopServiceButton"
-                android:layout_width="0dp"
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/serviceToggleButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="@string/button_start_service" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:padding="20dp"
+            app:cardBackgroundColor="@color/md_surface_high"
+            app:cardCornerRadius="20dp"
+            app:cardUseCompatPadding="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:enabled="false"
-                android:text="@string/button_stop_service" />
-        </LinearLayout>
+                android:layout_margin="10dp"
+                android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/statusText"
+                <com.google.android.material.textview.MaterialTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:text="@string/status_section_title"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="32sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="8dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingBottom="8dp">
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/status_badge_label_app"
+                            android:textColor="@color/md_on_surface"
+                            android:textSize="28sp" />
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/statusBadge"
+                            style="@style/Widget.BLEGPSMocker.Badge"
+                            android:text="@string/unknown" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="8dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingBottom="8dp">
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/status_badge_label_connection"
+                            android:textColor="@color/md_on_surface"
+                            android:textSize="28sp" />
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/connectionBadge"
+                            style="@style/Widget.BLEGPSMocker.Badge"
+                            android:text="@string/unknown" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="8dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingBottom="8dp">
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/status_badge_label_data_age"
+                            android:textColor="@color/md_on_surface"
+                            android:textSize="28sp" />
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/dataAgeBadge"
+                            style="@style/Widget.BLEGPSMocker.Badge"
+                            android:text="@string/unknown" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceMedium"
-            android:text="@string/status_unknown"
-            android:paddingBottom="8dp" />
+            android:layout_marginBottom="16dp"
+            android:padding="20dp"
+            app:cardBackgroundColor="@color/md_surface_high"
+            app:cardCornerRadius="20dp"
+            app:cardUseCompatPadding="true">
 
-        <TextView
-            android:id="@+id/connectionText"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="10dp"
+                android:orientation="vertical">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:text="@string/location_section_title"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="32sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/locationText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:text="@string/location_unknown"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="28sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="8dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingBottom="8dp">
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/location_badge_label_satellites"
+                            android:textColor="@color/md_on_surface"
+                            android:textSize="28sp" />
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/satellitesBadge"
+                            style="@style/Widget.BLEGPSMocker.Badge"
+                            android:text="@string/unknown" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="8dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingBottom="8dp">
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/location_badge_label_provider"
+                            android:textColor="@color/md_on_surface"
+                            android:textSize="28sp" />
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/providerBadge"
+                            style="@style/Widget.BLEGPSMocker.Badge"
+                            android:text="@string/unknown" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="8dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingBottom="8dp">
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/location_badge_label_age"
+                            android:textColor="@color/md_on_surface"
+                            android:textSize="28sp" />
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/ageBadge"
+                            style="@style/Widget.BLEGPSMocker.Badge"
+                            android:text="@string/unknown" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/additionalInfoText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/additional_info_unknown"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="28sp" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/lastUpdateText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/movement_last_update_unknown"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="28sp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceMedium"
-            android:text="@string/connection_unknown"
-            android:paddingBottom="8dp" />
+            android:layout_marginBottom="16dp"
+            android:padding="20dp"
+            app:cardBackgroundColor="@color/md_surface_high"
+            app:cardCornerRadius="20dp"
+            app:cardUseCompatPadding="true">
 
-        <TextView
-            android:id="@+id/dataAgeText"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="10dp"
+                android:orientation="vertical">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:text="@string/settings_section_title"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="32sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/apHotspotSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:enabled="false"
+                    android:text="@string/settings_ap_toggle_label"
+                    android:textSize="28sp"
+                    android:showText="false" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/bridgeModeSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:enabled="false"
+                    android:text="@string/settings_bridge_toggle_label"
+                    android:textSize="28sp"
+                    android:showText="false" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"
-            android:text="@string/data_age_unknown"
-            android:paddingBottom="12dp" />
+            android:padding="20dp"
+            app:cardBackgroundColor="@color/md_surface_high"
+            app:cardCornerRadius="20dp"
+            app:cardUseCompatPadding="true">
 
-        <TextView
-            android:id="@+id/locationText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceMedium"
-            android:text="@string/location_unknown"
-            android:paddingBottom="8dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="10dp"
+                android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/satellitesText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"
-            android:text="@string/satellites_unknown"
-            android:paddingBottom="4dp" />
+                <com.google.android.material.textview.MaterialTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:text="@string/permissions_section_title"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="32sp"
+                    android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/providerText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"
-            android:text="@string/provider_unknown"
-            android:paddingBottom="4dp" />
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/permissionsStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/missing_permissions_placeholder"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="28sp" />
 
-        <TextView
-            android:id="@+id/ageText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"
-            android:text="@string/age_unknown"
-            android:paddingBottom="12dp" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/requestPermissionsButton"
+                    style="@style/Widget.BLEGPSMocker.SecondaryButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/button_request_permissions" />
 
-        <TextView
-            android:id="@+id/additionalInfoText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"
-            android:text="@string/additional_info_unknown"
-            android:paddingBottom="8dp" />
-
-        <TextView
-            android:id="@+id/lastUpdateText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"
-            android:text="@string/movement_last_update_unknown"
-            android:paddingBottom="16dp" />
-
-        <TextView
-            android:id="@+id/permissionsStatusText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"
-            android:text="@string/missing_permissions_placeholder"
-            android:paddingBottom="12dp" />
-
-        <Button
-            android:id="@+id/requestPermissionsButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/button_request_permissions" />
-
-        <TextView
-            android:id="@+id/mockLocationStatusText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"
-            android:text="@string/mock_location_status_placeholder"
-            android:paddingTop="16dp" />
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/mockLocationStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/mock_location_status_placeholder"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="28sp"
+                    android:visibility="gone"
+                    tools:visibility="visible" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
-</ScrollView>
+</androidx.core.widget.NestedScrollView>
