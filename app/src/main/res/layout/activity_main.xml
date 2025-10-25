@@ -5,6 +5,9 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/md_background"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
+    android:descendantFocusability="beforeDescendants"
     android:fillViewport="true"
     android:paddingTop="16dp"
     android:paddingBottom="16dp">
@@ -338,6 +341,29 @@
                     android:text="@string/settings_bridge_toggle_label"
                     android:textSize="28sp"
                     android:showText="false" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/gpsBaudRateLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:enabled="false"
+                    android:hint="@string/settings_gps_baud_label"
+                    app:endIconMode="dropdown_menu"
+                    app:placeholderText="@string/settings_gps_baud_unknown">
+
+                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                        android:id="@+id/gpsBaudRateDropdown"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:enabled="false"
+                        android:inputType="none"
+                        android:importantForAutofill="no"
+                        android:completionThreshold="0"
+                        android:dropDownHeight="wrap_content"
+                        android:dropDownWidth="match_parent" />
+                </com.google.android.material.textfield.TextInputLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

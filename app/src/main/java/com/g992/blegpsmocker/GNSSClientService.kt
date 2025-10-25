@@ -21,6 +21,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.UUID
 
 private const val TAG = "GNSSClientService"
 private const val DEFAULT_HDOP_FALLBACK = 1.5
@@ -32,6 +33,10 @@ private const val SATELLITE_SIGNAL_STRONG_THRESHOLD = 35
 private const val SATELLITE_SIGNAL_MEDIUM_THRESHOLD = 20
 private const val RESCAN_DELAY_MS = 3_000L
 private const val STATIC_AP_SSID = "GPS-C3-xxxxxx"
+private const val GPS_BAUD_MIN = 4_800
+private const val GPS_BAUD_MAX = 921_600
+private const val DEVICE_SETTING_READ_RETRY_MAX = 3
+private const val DEVICE_SETTING_READ_RETRY_DELAY_MS = 300L
 
 class GNSSClientService :
     Service(),
@@ -68,6 +73,7 @@ class GNSSClientService :
     private var ttffSeconds: Long? = null
     private var apControlEnabled: Boolean? = null
     private var bridgeModeEnabled: Boolean? = null
+    private var gpsBaudRate: Int? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -130,6 +136,8 @@ class GNSSClientService :
 
     fun getApControlSsidHint(): String = STATIC_AP_SSID
 
+    fun getGpsBaudRate(): Int? = gpsBaudRate
+
     fun requestApControlChange(enabled: Boolean): Boolean {
         if (!isConnected) {
             Log.w(TAG, "requestApControlChange skipped: not connected")
@@ -147,6 +155,20 @@ class GNSSClientService :
         }
         val payload = if (enabled) "1" else "0"
         return connectionManager?.writeCharacteristic(BleUuids.CHAR_MODE_CONTROL_UUID, payload)
+            ?: false
+    }
+
+    fun requestGpsBaudRateChange(baudRate: Int): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "requestGpsBaudRateChange skipped: not connected")
+            return false
+        }
+        val sanitized = baudRate.coerceIn(GPS_BAUD_MIN, GPS_BAUD_MAX)
+        if (sanitized != baudRate) {
+            Log.w(TAG, "GPS baud rate $baudRate clamped to $sanitized")
+        }
+        val payload = sanitized.toString()
+        return connectionManager?.writeCharacteristic(BleUuids.CHAR_GPS_BAUD_UUID, payload)
             ?: false
     }
 
@@ -544,8 +566,10 @@ class GNSSClientService :
         val intent = Intent(ACTION_DEVICE_SETTINGS_CHANGED)
         intent.putExtra(EXTRA_AP_CONTROL_KNOWN, apControlEnabled != null)
         intent.putExtra(EXTRA_BRIDGE_MODE_KNOWN, bridgeModeEnabled != null)
+        intent.putExtra(EXTRA_GPS_BAUD_KNOWN, gpsBaudRate != null)
         apControlEnabled?.let { intent.putExtra(EXTRA_AP_CONTROL_ENABLED, it) }
         bridgeModeEnabled?.let { intent.putExtra(EXTRA_BRIDGE_MODE_ENABLED, it) }
+        gpsBaudRate?.let { intent.putExtra(EXTRA_GPS_BAUD_RATE, it) }
         intent.putExtra(EXTRA_AP_SSID_HINT, STATIC_AP_SSID)
         sendBroadcast(intent)
     }
@@ -567,16 +591,35 @@ class GNSSClientService :
     }
 
     private fun requestDeviceSettingsRead() {
-        val manager = connectionManager ?: return
         if (!isConnected) {
             Log.d(TAG, "Skipping device settings read: BLE not connected")
             return
         }
-        manager.readCharacteristic(BleUuids.CHAR_AP_CONTROL_UUID)
+        readDeviceSetting(BleUuids.CHAR_AP_CONTROL_UUID)
         handler.postDelayed(
-            { manager.readCharacteristic(BleUuids.CHAR_MODE_CONTROL_UUID) },
+            { readDeviceSetting(BleUuids.CHAR_MODE_CONTROL_UUID) },
             200
         )
+        handler.postDelayed(
+            { readDeviceSetting(BleUuids.CHAR_GPS_BAUD_UUID) },
+            400
+        )
+    }
+
+    private fun readDeviceSetting(uuid: UUID, attempt: Int = 0) {
+        val manager = connectionManager ?: return
+        if (!isConnected) {
+            return
+        }
+        val success = manager.readCharacteristic(uuid)
+        if (!success && attempt < DEVICE_SETTING_READ_RETRY_MAX) {
+            handler.postDelayed(
+                { readDeviceSetting(uuid, attempt + 1) },
+                DEVICE_SETTING_READ_RETRY_DELAY_MS
+            )
+        } else if (!success) {
+            Log.w(TAG, "Failed to read $uuid after ${attempt + 1} attempts")
+        }
     }
 
     private fun hasMockLocationPermission(): Boolean {
@@ -643,6 +686,7 @@ class GNSSClientService :
         startReceivingLocationUpdates()
         broadcastConnectionState(true)
         broadcastDeviceSettings()
+        requestDeviceSettingsRead()
         updateNotification()
     }
 
@@ -658,6 +702,7 @@ class GNSSClientService :
         broadcastConnectionState(false)
         apControlEnabled = null
         bridgeModeEnabled = null
+        gpsBaudRate = null
         broadcastDeviceSettings()
         updateNotification()
         if (AppPrefs.isMockEnabled(this)) {
@@ -667,6 +712,7 @@ class GNSSClientService :
 
     override fun onServicesDiscovered(device: BluetoothDevice) {
         Log.d(TAG, "Services discovered on ${device.address}")
+        connectionManager?.startKeepAlive()
         requestDeviceSettingsRead()
     }
 
@@ -735,6 +781,22 @@ class GNSSClientService :
         broadcastDeviceSettings()
     }
 
+    override fun onGpsBaudRateChanged(baudRate: Int) {
+        val sanitized = baudRate.coerceIn(GPS_BAUD_MIN, GPS_BAUD_MAX)
+        val previous = gpsBaudRate
+        gpsBaudRate = sanitized
+        if (previous != sanitized) {
+            if (sanitized != baudRate) {
+                Log.w(TAG, "GPS baud rate updated with out-of-range value $baudRate, using $sanitized")
+            } else {
+                Log.i(TAG, "GPS baud rate updated to $sanitized")
+            }
+            broadcastDeviceSettings()
+        } else if (previous == null) {
+            broadcastDeviceSettings()
+        }
+    }
+
     override fun onTtffReceived(ttffSeconds: Long) {
         this.ttffSeconds = ttffSeconds
     }
@@ -764,6 +826,8 @@ class GNSSClientService :
         const val EXTRA_AP_SSID_HINT = "ap_ssid_hint"
         const val EXTRA_AP_CONTROL_KNOWN = "ap_control_known"
         const val EXTRA_BRIDGE_MODE_KNOWN = "bridge_mode_known"
+        const val EXTRA_GPS_BAUD_RATE = "gps_baud_rate"
+        const val EXTRA_GPS_BAUD_KNOWN = "gps_baud_known"
 
         private val providerCandidates = listOf(LocationManager.GPS_PROVIDER)
 

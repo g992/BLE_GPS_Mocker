@@ -33,6 +33,8 @@ object BleUuids {
     val CHAR_STATUS_UUID: UUID = UUID.fromString("3e4f5d6c-7b8a-9d0e-1f2a-3b4c5d6e7f8a")
     val CHAR_AP_CONTROL_UUID: UUID = UUID.fromString("a37f8c1b-281d-4e15-8fb2-0b7e6ebd21c0")
     val CHAR_MODE_CONTROL_UUID: UUID = UUID.fromString("d047f6b3-5f7c-4e5b-9c21-4c0f2b6a8f10")
+    val CHAR_GPS_BAUD_UUID: UUID = UUID.fromString("f3a1a816-28f2-4b6d-9f76-6f7aa2d06123")
+    val CHAR_KEEPALIVE_UUID: UUID = UUID.fromString("6b5d5304-4523-4db4-9a31-0f3d88c2ce11")
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 }
 
@@ -59,6 +61,7 @@ interface BleConnectionDataListener {
     fun onTtffReceived(ttffSeconds: Long)
     fun onApControlChanged(enabled: Boolean)
     fun onBridgeModeChanged(enabled: Boolean)
+    fun onGpsBaudRateChanged(baudRate: Int)
 }
 
 @SuppressLint("MissingPermission")
@@ -77,6 +80,8 @@ class ConnectionManager(
     private var foundDeviceDuringScan = false
     private val tag = "ConnectionManager"
     private var gpsService: android.bluetooth.BluetoothGattService? = null
+    private var keepAliveRunnable: Runnable? = null
+    private var keepAliveFailCount = 0
 
     private val scanCallback =
         object : ScanCallback() {
@@ -125,7 +130,7 @@ class ConnectionManager(
                 val device = gatt.device
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
-                        Log.i(tag, "Connected to GATT server at ${device.address}")
+                    Log.i(tag, "Connected to GATT server at ${device.address}")
                         bluetoothGatt = gatt
                         connectionListener?.onConnected(device)
                         if (hasConnectPermission()) {
@@ -140,6 +145,7 @@ class ConnectionManager(
 
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         Log.i(tag, "Disconnected from GATT server at ${device.address}")
+                        stopKeepAlive()
                         connectionListener?.onDisconnected(device)
                         closeGatt()
                     }
@@ -165,7 +171,6 @@ class ConnectionManager(
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     Log.i(tag, "Services discovered for device ${gatt.device.address}")
-                    connectionListener?.onServicesDiscovered(gatt.device)
                     val service = gatt.getService(BleUuids.GPS_SERVICE_UUID)
                     gpsService = service
                     if (service == null) {
@@ -180,6 +185,8 @@ class ConnectionManager(
                         { enableNotificationsInternal(gatt, service, BleUuids.CHAR_STATUS_UUID) },
                         100
                     )
+
+                    connectionListener?.onServicesDiscovered(gatt.device)
                 } else {
                     val message =
                         "onServicesDiscovered received error: $status for device ${gatt.device.address}"
@@ -290,6 +297,10 @@ class ConnectionManager(
         if (status == BluetoothGatt.GATT_SUCCESS) {
             Log.i(tag, "Characteristic $uuid written successfully")
             if (data != null) {
+                if (uuid == BleUuids.CHAR_KEEPALIVE_UUID) {
+                    val stringValue = data.toString(Charsets.UTF_8).trim()
+                    Log.d(tag, "Keepalive write ack timestamp=$stringValue")
+                }
                 parseAndNotify(uuid, data)
             } else {
                 Log.d(tag, "Characteristic $uuid write success with no value payload")
@@ -315,6 +326,14 @@ class ConnectionManager(
                 BleUuids.CHAR_MODE_CONTROL_UUID -> {
                     val enabled = stringValue == "1"
                     connectionListener?.onBridgeModeChanged(enabled)
+                }
+                BleUuids.CHAR_GPS_BAUD_UUID -> {
+                    val baudRate = stringValue.toIntOrNull()
+                    if (baudRate != null) {
+                        connectionListener?.onGpsBaudRateChanged(baudRate)
+                    } else {
+                        Log.w(tag, "Invalid GPS baud payload: $stringValue")
+                    }
                 }
                 else -> Log.d(tag, "No specific parsing for UUID $uuid")
             }
@@ -672,10 +691,12 @@ class ConnectionManager(
             return
         }
         Log.i(tag, "Disconnecting from ${bluetoothGatt?.device?.address}")
+        stopKeepAlive()
         bluetoothGatt?.disconnect()
     }
 
     fun closeGatt() {
+        stopKeepAlive()
         bluetoothGatt?.close()
         bluetoothGatt = null
         gpsService = null
@@ -699,5 +720,84 @@ class ConnectionManager(
         }
         readCharacteristicInternal(gatt, service, BleUuids.CHAR_STATUS_UUID)
         return true
+    }
+
+    @Synchronized
+    fun startKeepAlive(delayMillis: Long = 0L) {
+        if (keepAliveRunnable != null) {
+            Log.d(tag, "Keepalive loop already running, restarting")
+            stopKeepAlive()
+        }
+        keepAliveFailCount = 0
+        val service = gpsService ?: run {
+            Log.w(tag, "Cannot start keepalive: GPS service unavailable")
+            return
+        }
+        val characteristic = service.getCharacteristic(BleUuids.CHAR_KEEPALIVE_UUID)
+        if (characteristic == null) {
+            Log.w(tag, "Keepalive characteristic ${BleUuids.CHAR_KEEPALIVE_UUID} not found")
+            return
+        }
+        val supportsWrite =
+            (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0 ||
+                (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+        if (!supportsWrite) {
+            Log.w(
+                tag,
+                "Keepalive characteristic ${BleUuids.CHAR_KEEPALIVE_UUID} is not writable (properties=${characteristic.properties})"
+            )
+            return
+        }
+
+        val runnable =
+            object : Runnable {
+                override fun run() {
+                    val timestampSeconds = (System.currentTimeMillis() / 1000L).toString()
+                    Log.d(tag, "Sending keepalive timestamp=$timestampSeconds")
+                    val enqueued = writeCharacteristic(BleUuids.CHAR_KEEPALIVE_UUID, timestampSeconds)
+                    if (!enqueued) {
+                        keepAliveFailCount += 1
+                        if (keepAliveFailCount < KEEPALIVE_MAX_RETRIES) {
+                            Log.w(
+                                tag,
+                                "Keepalive enqueue failed (attempt $keepAliveFailCount/$KEEPALIVE_MAX_RETRIES), retrying in ${KEEPALIVE_RETRY_INTERVAL_MS}ms"
+                            )
+                            handler.postDelayed(this, KEEPALIVE_RETRY_INTERVAL_MS)
+                        } else {
+                            Log.e(
+                                tag,
+                                "Keepalive enqueue failed $KEEPALIVE_MAX_RETRIES times, backing off for ${KEEPALIVE_INTERVAL_MS}ms"
+                            )
+                            keepAliveFailCount = 0
+                            handler.postDelayed(this, KEEPALIVE_INTERVAL_MS)
+                        }
+                        return
+                    }
+                    keepAliveFailCount = 0
+                    handler.postDelayed(this, KEEPALIVE_INTERVAL_MS)
+                }
+            }
+        keepAliveRunnable = runnable
+        if (delayMillis <= 0L) {
+            handler.post(runnable)
+        } else {
+            handler.postDelayed(runnable, delayMillis)
+        }
+        Log.d(tag, "Keepalive loop scheduled to start in ${delayMillis}ms")
+    }
+
+    @Synchronized
+    private fun stopKeepAlive() {
+        val runnable = keepAliveRunnable ?: return
+        handler.removeCallbacks(runnable)
+        keepAliveRunnable = null
+        keepAliveFailCount = 0
+        Log.d(tag, "Keepalive loop stopped")
+    }
+
+    companion object {
+        private const val KEEPALIVE_INTERVAL_MS = 1_000L
+        private const val KEEPALIVE_RETRY_INTERVAL_MS = 1_000L
+        private const val KEEPALIVE_MAX_RETRIES = 3
     }
 }

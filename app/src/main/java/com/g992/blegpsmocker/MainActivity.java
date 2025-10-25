@@ -21,6 +21,8 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.view.View;
+import android.widget.ArrayAdapter;
+import android.widget.Filter;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -36,9 +38,12 @@ import androidx.core.graphics.drawable.DrawableCompat;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.switchmaterial.SwitchMaterial;
+import com.google.android.material.textfield.MaterialAutoCompleteTextView;
+import com.google.android.material.textfield.TextInputLayout;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -76,14 +81,21 @@ public class MainActivity extends AppCompatActivity {
     private TextView serviceStatusText;
     private SwitchMaterial apHotspotSwitch;
     private SwitchMaterial bridgeModeSwitch;
+    private TextInputLayout gpsBaudRateLayout;
+    private MaterialAutoCompleteTextView gpsBaudRateDropdown;
 
     @Nullable
     private Boolean apControlState = null;
     @Nullable
     private Boolean bridgeModeState = null;
+    @Nullable
+    private Integer gpsBaudRate = null;
     private String apSsidHint = null;
     private boolean suppressApSwitchChange = false;
     private boolean suppressBridgeSwitchChange = false;
+    private boolean suppressGpsBaudChange = false;
+    private int[] gpsBaudRateValues = new int[0];
+    private String[] gpsBaudRateLabels = new String[0];
 
     private GNSSClientService clientService;
     private boolean serviceBound = false;
@@ -163,8 +175,13 @@ public class MainActivity extends AppCompatActivity {
                     Boolean bridgeState = bridgeKnown
                             ? intent.getBooleanExtra(GNSSClientService.EXTRA_BRIDGE_MODE_ENABLED, false)
                             : null;
+                    boolean baudKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_GPS_BAUD_KNOWN, false);
+                    Integer baudRate = baudKnown
+                            ? intent.getIntExtra(GNSSClientService.EXTRA_GPS_BAUD_RATE, 0)
+                            : null;
                     String ssid = intent.getStringExtra(GNSSClientService.EXTRA_AP_SSID_HINT);
-                    applyDeviceSettingsUpdate(apState, true, bridgeState, true, ssid);
+                    applyDeviceSettingsUpdate(apState, true, bridgeState, true, baudRate, true, ssid);
                 }
             };
 
@@ -191,6 +208,7 @@ public class MainActivity extends AppCompatActivity {
                     applyDeviceSettingsUpdate(
                             clientService.getApControlState(),
                             clientService.getBridgeModeState(),
+                            clientService.getGpsBaudRate(),
                             clientService.getApControlSsidHint()
                     );
                     clientService.refreshDeviceSettings();
@@ -254,6 +272,34 @@ public class MainActivity extends AppCompatActivity {
         serviceStatusText = findViewById(R.id.serviceStatusText);
         apHotspotSwitch = findViewById(R.id.apHotspotSwitch);
         bridgeModeSwitch = findViewById(R.id.bridgeModeSwitch);
+        gpsBaudRateLayout = findViewById(R.id.gpsBaudRateLayout);
+        gpsBaudRateDropdown = findViewById(R.id.gpsBaudRateDropdown);
+
+        gpsBaudRateLabels = getResources().getStringArray(R.array.gps_baud_rate_labels);
+        gpsBaudRateValues = getResources().getIntArray(R.array.gps_baud_rate_values);
+        if (gpsBaudRateDropdown != null) {
+            ArrayAdapter<String> baudAdapter =
+                    new NoFilterArrayAdapter(this, android.R.layout.simple_list_item_1, Arrays.asList(gpsBaudRateLabels));
+            gpsBaudRateDropdown.setAdapter(baudAdapter);
+            gpsBaudRateDropdown.setKeyListener(null);
+            gpsBaudRateDropdown.setText("", false);
+            gpsBaudRateDropdown.setOnItemClickListener((parent, view, position, id) -> {
+                if (position >= 0 && position < gpsBaudRateValues.length) {
+                    handleGpsBaudSelection(gpsBaudRateValues[position]);
+                }
+            });
+            gpsBaudRateDropdown.setOnClickListener(v -> {
+                showGpsBaudDropdown();
+            });
+            if (gpsBaudRateLayout != null) {
+                gpsBaudRateLayout.setEndIconOnClickListener(v -> {
+                    if (gpsBaudRateDropdown != null) {
+                        gpsBaudRateDropdown.requestFocus();
+                    }
+                    showGpsBaudDropdown();
+                });
+            }
+        }
 
         statusBadge.setText(getString(R.string.unknown));
         connectionBadge.setText(getString(R.string.unknown));
@@ -547,7 +593,15 @@ public class MainActivity extends AppCompatActivity {
         badge.setTextColor(ContextCompat.getColor(this, textColorRes));
     }
 
-    private void applyDeviceSettingsUpdate(@Nullable Boolean apState, boolean updateAp, @Nullable Boolean bridgeState, boolean updateBridge, @Nullable String ssid) {
+    private void applyDeviceSettingsUpdate(
+            @Nullable Boolean apState,
+            boolean updateAp,
+            @Nullable Boolean bridgeState,
+            boolean updateBridge,
+            @Nullable Integer baudRate,
+            boolean updateBaud,
+            @Nullable String ssid
+    ) {
         runOnUiThread(
                 () -> {
                     if (updateAp) {
@@ -556,6 +610,9 @@ public class MainActivity extends AppCompatActivity {
                     if (updateBridge) {
                         bridgeModeState = bridgeState;
                     }
+                    if (updateBaud) {
+                        gpsBaudRate = baudRate;
+                    }
                     if (ssid != null && !ssid.isEmpty()) {
                         apSsidHint = ssid;
                     }
@@ -563,31 +620,84 @@ public class MainActivity extends AppCompatActivity {
                 });
     }
 
-    private void applyDeviceSettingsUpdate(@Nullable Boolean apState, @Nullable Boolean bridgeState, @Nullable String ssid) {
-        applyDeviceSettingsUpdate(apState, true, bridgeState, true, ssid);
+    private void applyDeviceSettingsUpdate(
+            @Nullable Boolean apState,
+            @Nullable Boolean bridgeState,
+            @Nullable Integer baudRate,
+            @Nullable String ssid
+    ) {
+        applyDeviceSettingsUpdate(apState, true, bridgeState, true, baudRate, true, ssid);
     }
 
     private void updateDeviceSettingsUi() {
-        if (apHotspotSwitch == null || bridgeModeSwitch == null) {
+        boolean connected = isServiceReadyForSettings();
+
+        if (apHotspotSwitch != null) {
+            suppressApSwitchChange = true;
+            boolean apKnown = apControlState != null;
+            apHotspotSwitch.setEnabled(connected);
+            if (apKnown) {
+                apHotspotSwitch.setChecked(Boolean.TRUE.equals(apControlState));
+            }
+            suppressApSwitchChange = false;
+        }
+
+        if (bridgeModeSwitch != null) {
+            suppressBridgeSwitchChange = true;
+            boolean bridgeKnown = bridgeModeState != null;
+            bridgeModeSwitch.setEnabled(connected);
+            if (bridgeKnown) {
+                bridgeModeSwitch.setChecked(Boolean.TRUE.equals(bridgeModeState));
+            }
+            suppressBridgeSwitchChange = false;
+        }
+
+        if (gpsBaudRateLayout != null && gpsBaudRateDropdown != null) {
+            gpsBaudRateLayout.setEnabled(connected);
+            gpsBaudRateDropdown.setEnabled(connected);
+            suppressGpsBaudChange = true;
+            if (gpsBaudRate != null) {
+                String label = findGpsBaudLabel(gpsBaudRate);
+                if (label != null) {
+                    gpsBaudRateDropdown.setText(label, false);
+                } else {
+                    gpsBaudRateDropdown.setText(String.valueOf(gpsBaudRate), false);
+                }
+            } else {
+                gpsBaudRateDropdown.setText("", false);
+            }
+            suppressGpsBaudChange = false;
+        }
+    }
+
+    @Nullable
+    private String findGpsBaudLabel(@Nullable Integer baudRateValue) {
+        if (baudRateValue == null || gpsBaudRateValues == null || gpsBaudRateLabels == null) {
+            return null;
+        }
+        int length = Math.min(gpsBaudRateValues.length, gpsBaudRateLabels.length);
+        for (int index = 0; index < length; index++) {
+            if (gpsBaudRateValues[index] == baudRateValue) {
+                return gpsBaudRateLabels[index];
+            }
+        }
+        return null;
+    }
+
+    private void showGpsBaudDropdown() {
+        if (gpsBaudRateDropdown == null || !gpsBaudRateDropdown.isEnabled()) {
             return;
         }
-        boolean connected = serviceBound && clientService != null && clientService.isConnectedToServer();
-
-        suppressApSwitchChange = true;
-        boolean apKnown = apControlState != null;
-        apHotspotSwitch.setEnabled(connected);
-        if (apKnown) {
-            apHotspotSwitch.setChecked(Boolean.TRUE.equals(apControlState));
-        }
-        suppressApSwitchChange = false;
-
-        suppressBridgeSwitchChange = true;
-        boolean bridgeKnown = bridgeModeState != null;
-        bridgeModeSwitch.setEnabled(connected);
-        if (bridgeKnown) {
-            bridgeModeSwitch.setChecked(Boolean.TRUE.equals(bridgeModeState));
-        }
-        suppressBridgeSwitchChange = false;
+        gpsBaudRateDropdown.post(
+                () -> {
+                    if (gpsBaudRateDropdown == null || !gpsBaudRateDropdown.isEnabled()) {
+                        return;
+                    }
+                    if (gpsBaudRateDropdown.isAttachedToWindow()) {
+                        gpsBaudRateDropdown.showDropDown();
+                    }
+                }
+        );
     }
 
     private boolean isServiceReadyForSettings() {
@@ -731,6 +841,96 @@ public class MainActivity extends AppCompatActivity {
                     },
                     500
             );
+        }
+    }
+
+    private void handleGpsBaudSelection(int desiredBaudRate) {
+        if (suppressGpsBaudChange) {
+            return;
+        }
+        if (gpsBaudRateDropdown != null) {
+            gpsBaudRateDropdown.dismissDropDown();
+        }
+        if (!isServiceReadyForSettings() || clientService == null) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            uiHandler.post(this::updateDeviceSettingsUi);
+            return;
+        }
+        Integer current = gpsBaudRate;
+        if (current != null && current == desiredBaudRate) {
+            return;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.settings_gps_baud_dialog_title)
+                .setMessage(R.string.settings_gps_baud_dialog_message)
+                .setPositiveButton(
+                        R.string.dialog_ok,
+                        (dialog, which) -> {
+                            if (clientService == null) {
+                                updateDeviceSettingsUi();
+                                return;
+                            }
+                            boolean accepted = clientService.requestGpsBaudRateChange(desiredBaudRate);
+                            if (!accepted) {
+                                Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                                updateDeviceSettingsUi();
+                                return;
+                            }
+                            uiHandler.postDelayed(
+                                    () -> {
+                                        if (clientService != null) {
+                                            clientService.refreshDeviceSettings();
+                                        }
+                                    },
+                                    500
+                            );
+                        })
+                .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> updateDeviceSettingsUi())
+                .setOnCancelListener(dialog -> updateDeviceSettingsUi())
+                .show();
+    }
+
+    private static class NoFilterArrayAdapter extends ArrayAdapter<String> {
+        private final List<String> items;
+
+        NoFilterArrayAdapter(@NonNull Context context, int resource, @NonNull List<String> values) {
+            super(context, resource, new ArrayList<>(values));
+            this.items = new ArrayList<>(values);
+        }
+
+        @Override
+        public int getCount() {
+            return items.size();
+        }
+
+        @Nullable
+        @Override
+        public String getItem(int position) {
+            return items.get(position);
+        }
+
+        @NonNull
+        @Override
+        public Filter getFilter() {
+            return new Filter() {
+                @Override
+                protected FilterResults performFiltering(CharSequence constraint) {
+                    FilterResults results = new FilterResults();
+                    results.count = items.size();
+                    results.values = items;
+                    return results;
+                }
+
+                @Override
+                protected void publishResults(CharSequence constraint, FilterResults results) {
+                    notifyDataSetChanged();
+                }
+
+                @Override
+                public CharSequence convertResultToString(Object resultValue) {
+                    return resultValue instanceof CharSequence ? (CharSequence) resultValue : super.convertResultToString(resultValue);
+                }
+            };
         }
     }
 

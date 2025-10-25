@@ -66,6 +66,10 @@
     <string name="settings_ap_default_ssid">GPS-C3-xxxx</string>
     <string name="settings_bridge_dialog_title">Переключение в режим моста</string>
     <string name="settings_bridge_dialog_message">ESP перезапустится и станет доступен как USB GPS модем. Передача навигации по Wi‑Fi и BLE будет недоступна, пока вы не выключите режим моста.</string>
+    <string name="settings_gps_baud_label">Скорость GPS модема</string>
+    <string name="settings_gps_baud_unknown">—</string>
+    <string name="settings_gps_baud_dialog_title">Изменение скорости GNSS</string>
+    <string name="settings_gps_baud_dialog_message">Изменяется скорость работы устройства с GNSS модулем. Скорость связи устройства с подключённым девайсом остаётся постоянной. Продолжить?</string>
     <string name="dialog_ok">ОК</string>
     <string name="dialog_cancel">Отмена</string>
     <string name="settings_write_failed">Не удалось изменить настройку. Попробуйте ещё раз.</string>
