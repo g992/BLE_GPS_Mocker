@@ -4,10 +4,10 @@
     <selectionStates>
       <SelectionState runConfigName="app">
         <option name="selectionMode" value="DROPDOWN" />
-        <DropdownSelection timestamp="2025-10-19T07:56:24.927695Z">
+        <DropdownSelection timestamp="2025-10-31T16:24:39.259591Z">
           <Target type="DEFAULT_BOOT">
             <handle>
-              <DeviceId pluginId="Default" identifier="serial=192.168.165.253:5555;connection=f79ca0d7" />
+              <DeviceId pluginId="LocalEmulator" identifier="path=/Users/G992/.android/avd/Medium_Phone_2.avd" />
             </handle>
           </Target>
         </DropdownSelection>
