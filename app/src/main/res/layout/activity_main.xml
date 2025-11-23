@@ -343,6 +343,29 @@
                     android:showText="false" />
 
                 <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/gnssProfileLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:enabled="false"
+                    android:hint="@string/settings_gnss_profile_label"
+                    app:endIconMode="dropdown_menu"
+                    app:placeholderText="@string/settings_gnss_profile_unknown">
+
+                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                        android:id="@+id/gnssProfileDropdown"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:enabled="false"
+                        android:inputType="none"
+                        android:importantForAutofill="no"
+                        android:completionThreshold="0"
+                        android:dropDownHeight="wrap_content"
+                        android:dropDownWidth="match_parent" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/gpsBaudRateLayout"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                     android:layout_width="match_parent"

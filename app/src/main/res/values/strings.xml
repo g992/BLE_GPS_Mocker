@@ -70,6 +70,10 @@
     <string name="settings_gps_baud_unknown">—</string>
     <string name="settings_gps_baud_dialog_title">Изменение скорости GNSS</string>
     <string name="settings_gps_baud_dialog_message">Изменяется скорость работы устройства с GNSS модулем. Скорость связи устройства с подключённым девайсом остаётся постоянной. Продолжить?</string>
+    <string name="settings_gnss_profile_label">GNSS профиль (UBX)</string>
+    <string name="settings_gnss_profile_unknown">—</string>
+    <string name="settings_gnss_profile_dialog_title">Переключение GNSS профиля</string>
+    <string name="settings_gnss_profile_dialog_message">Будет применён скрипт UBX: NMEA выключится, модуль вернётся к настройкам по умолчанию и переключится на выбранный профиль, затем включатся проверки и NMEA. Продолжить?</string>
     <string name="dialog_ok">ОК</string>
     <string name="dialog_cancel">Отмена</string>
     <string name="settings_write_failed">Не удалось изменить настройку. Попробуйте ещё раз.</string>

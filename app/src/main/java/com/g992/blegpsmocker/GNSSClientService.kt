@@ -35,6 +35,7 @@ private const val RESCAN_DELAY_MS = 3_000L
 private const val STATIC_AP_SSID = "GPS-C3-xxxxxx"
 private const val GPS_BAUD_MIN = 4_800
 private const val GPS_BAUD_MAX = 921_600
+private val GNSS_PROFILE_VALUES = setOf(0, 1, 2)
 private const val DEVICE_SETTING_READ_RETRY_MAX = 3
 private const val DEVICE_SETTING_READ_RETRY_DELAY_MS = 300L
 
@@ -74,6 +75,7 @@ class GNSSClientService :
     private var apControlEnabled: Boolean? = null
     private var bridgeModeEnabled: Boolean? = null
     private var gpsBaudRate: Int? = null
+    private var gnssProfile: Int? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -138,6 +140,8 @@ class GNSSClientService :
 
     fun getGpsBaudRate(): Int? = gpsBaudRate
 
+    fun getGnssProfile(): Int? = gnssProfile
+
     fun requestApControlChange(enabled: Boolean): Boolean {
         if (!isConnected) {
             Log.w(TAG, "requestApControlChange skipped: not connected")
@@ -169,6 +173,20 @@ class GNSSClientService :
         }
         val payload = sanitized.toString()
         return connectionManager?.writeCharacteristic(BleUuids.CHAR_GPS_BAUD_UUID, payload)
+            ?: false
+    }
+
+    fun requestGnssProfileChange(profile: Int): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "requestGnssProfileChange skipped: not connected")
+            return false
+        }
+        if (!GNSS_PROFILE_VALUES.contains(profile)) {
+            Log.w(TAG, "requestGnssProfileChange skipped: unsupported profile $profile")
+            return false
+        }
+        val payload = profile.toString()
+        return connectionManager?.writeCharacteristic(BleUuids.CHAR_GNSS_PROFILE_UUID, payload)
             ?: false
     }
 
@@ -567,9 +585,11 @@ class GNSSClientService :
         intent.putExtra(EXTRA_AP_CONTROL_KNOWN, apControlEnabled != null)
         intent.putExtra(EXTRA_BRIDGE_MODE_KNOWN, bridgeModeEnabled != null)
         intent.putExtra(EXTRA_GPS_BAUD_KNOWN, gpsBaudRate != null)
+        intent.putExtra(EXTRA_GNSS_PROFILE_KNOWN, gnssProfile != null)
         apControlEnabled?.let { intent.putExtra(EXTRA_AP_CONTROL_ENABLED, it) }
         bridgeModeEnabled?.let { intent.putExtra(EXTRA_BRIDGE_MODE_ENABLED, it) }
         gpsBaudRate?.let { intent.putExtra(EXTRA_GPS_BAUD_RATE, it) }
+        gnssProfile?.let { intent.putExtra(EXTRA_GNSS_PROFILE, it) }
         intent.putExtra(EXTRA_AP_SSID_HINT, STATIC_AP_SSID)
         sendBroadcast(intent)
     }
@@ -603,6 +623,10 @@ class GNSSClientService :
         handler.postDelayed(
             { readDeviceSetting(BleUuids.CHAR_GPS_BAUD_UUID) },
             400
+        )
+        handler.postDelayed(
+            { readDeviceSetting(BleUuids.CHAR_GNSS_PROFILE_UUID) },
+            600
         )
     }
 
@@ -703,6 +727,7 @@ class GNSSClientService :
         apControlEnabled = null
         bridgeModeEnabled = null
         gpsBaudRate = null
+        gnssProfile = null
         broadcastDeviceSettings()
         updateNotification()
         if (AppPrefs.isMockEnabled(this)) {
@@ -797,6 +822,22 @@ class GNSSClientService :
         }
     }
 
+    override fun onGnssProfileChanged(profile: Int) {
+        val previous = gnssProfile
+        val supported = GNSS_PROFILE_VALUES.contains(profile)
+        gnssProfile = profile
+        if (previous != gnssProfile) {
+            if (!supported) {
+                Log.w(TAG, "GNSS profile $profile not in supported set")
+            } else {
+                Log.i(TAG, "GNSS profile updated to $profile")
+            }
+            broadcastDeviceSettings()
+        } else if (previous == null) {
+            broadcastDeviceSettings()
+        }
+    }
+
     override fun onTtffReceived(ttffSeconds: Long) {
         this.ttffSeconds = ttffSeconds
     }
@@ -828,6 +869,8 @@ class GNSSClientService :
         const val EXTRA_BRIDGE_MODE_KNOWN = "bridge_mode_known"
         const val EXTRA_GPS_BAUD_RATE = "gps_baud_rate"
         const val EXTRA_GPS_BAUD_KNOWN = "gps_baud_known"
+        const val EXTRA_GNSS_PROFILE = "gnss_profile"
+        const val EXTRA_GNSS_PROFILE_KNOWN = "gnss_profile_known"
 
         private val providerCandidates = listOf(LocationManager.GPS_PROVIDER)
 

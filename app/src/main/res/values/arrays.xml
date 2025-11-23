@@ -22,4 +22,15 @@
         <item>460800</item>
         <item>921600</item>
     </integer-array>
+
+    <string-array name="gnss_profile_labels">
+        <item>Все системы (по умолчанию)</item>
+        <item>ГЛОНАСС + BeiDou + Galileo</item>
+        <item>Только ГЛОНАСС</item>
+    </string-array>
+    <integer-array name="gnss_profile_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
 </resources>

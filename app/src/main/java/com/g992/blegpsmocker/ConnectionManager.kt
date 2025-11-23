@@ -34,6 +34,7 @@ object BleUuids {
     val CHAR_AP_CONTROL_UUID: UUID = UUID.fromString("a37f8c1b-281d-4e15-8fb2-0b7e6ebd21c0")
     val CHAR_MODE_CONTROL_UUID: UUID = UUID.fromString("d047f6b3-5f7c-4e5b-9c21-4c0f2b6a8f10")
     val CHAR_GPS_BAUD_UUID: UUID = UUID.fromString("f3a1a816-28f2-4b6d-9f76-6f7aa2d06123")
+    val CHAR_GNSS_PROFILE_UUID: UUID = UUID.fromString("1fd95e59-993e-4bf5-a0b7-f481508c9a94")
     val CHAR_KEEPALIVE_UUID: UUID = UUID.fromString("6b5d5304-4523-4db4-9a31-0f3d88c2ce11")
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 }
@@ -62,6 +63,7 @@ interface BleConnectionDataListener {
     fun onApControlChanged(enabled: Boolean)
     fun onBridgeModeChanged(enabled: Boolean)
     fun onGpsBaudRateChanged(baudRate: Int)
+    fun onGnssProfileChanged(profile: Int)
 }
 
 @SuppressLint("MissingPermission")
@@ -333,6 +335,14 @@ class ConnectionManager(
                         connectionListener?.onGpsBaudRateChanged(baudRate)
                     } else {
                         Log.w(tag, "Invalid GPS baud payload: $stringValue")
+                    }
+                }
+                BleUuids.CHAR_GNSS_PROFILE_UUID -> {
+                    val profile = stringValue.toIntOrNull()
+                    if (profile != null) {
+                        connectionListener?.onGnssProfileChanged(profile)
+                    } else {
+                        Log.w(tag, "Invalid GNSS profile payload: $stringValue")
                     }
                 }
                 else -> Log.d(tag, "No specific parsing for UUID $uuid")

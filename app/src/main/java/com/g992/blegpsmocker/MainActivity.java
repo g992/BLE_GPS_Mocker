@@ -81,6 +81,8 @@ public class MainActivity extends AppCompatActivity {
     private TextView serviceStatusText;
     private SwitchMaterial apHotspotSwitch;
     private SwitchMaterial bridgeModeSwitch;
+    private TextInputLayout gnssProfileLayout;
+    private MaterialAutoCompleteTextView gnssProfileDropdown;
     private TextInputLayout gpsBaudRateLayout;
     private MaterialAutoCompleteTextView gpsBaudRateDropdown;
 
@@ -89,11 +91,16 @@ public class MainActivity extends AppCompatActivity {
     @Nullable
     private Boolean bridgeModeState = null;
     @Nullable
+    private Integer gnssProfile = null;
+    @Nullable
     private Integer gpsBaudRate = null;
     private String apSsidHint = null;
     private boolean suppressApSwitchChange = false;
     private boolean suppressBridgeSwitchChange = false;
+    private boolean suppressGnssProfileChange = false;
     private boolean suppressGpsBaudChange = false;
+    private int[] gnssProfileValues = new int[0];
+    private String[] gnssProfileLabels = new String[0];
     private int[] gpsBaudRateValues = new int[0];
     private String[] gpsBaudRateLabels = new String[0];
 
@@ -180,8 +187,22 @@ public class MainActivity extends AppCompatActivity {
                     Integer baudRate = baudKnown
                             ? intent.getIntExtra(GNSSClientService.EXTRA_GPS_BAUD_RATE, 0)
                             : null;
+                    boolean gnssProfileKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_GNSS_PROFILE_KNOWN, false);
+                    Integer gnssProfileValue = gnssProfileKnown
+                            ? intent.getIntExtra(GNSSClientService.EXTRA_GNSS_PROFILE, 0)
+                            : null;
                     String ssid = intent.getStringExtra(GNSSClientService.EXTRA_AP_SSID_HINT);
-                    applyDeviceSettingsUpdate(apState, true, bridgeState, true, baudRate, true, ssid);
+                    applyDeviceSettingsUpdate(
+                            apState,
+                            true,
+                            bridgeState,
+                            true,
+                            gnssProfileValue,
+                            true,
+                            baudRate,
+                            true,
+                            ssid);
                 }
             };
 
@@ -208,6 +229,7 @@ public class MainActivity extends AppCompatActivity {
                     applyDeviceSettingsUpdate(
                             clientService.getApControlState(),
                             clientService.getBridgeModeState(),
+                            clientService.getGnssProfile(),
                             clientService.getGpsBaudRate(),
                             clientService.getApControlSsidHint()
                     );
@@ -272,8 +294,34 @@ public class MainActivity extends AppCompatActivity {
         serviceStatusText = findViewById(R.id.serviceStatusText);
         apHotspotSwitch = findViewById(R.id.apHotspotSwitch);
         bridgeModeSwitch = findViewById(R.id.bridgeModeSwitch);
+        gnssProfileLayout = findViewById(R.id.gnssProfileLayout);
+        gnssProfileDropdown = findViewById(R.id.gnssProfileDropdown);
         gpsBaudRateLayout = findViewById(R.id.gpsBaudRateLayout);
         gpsBaudRateDropdown = findViewById(R.id.gpsBaudRateDropdown);
+
+        gnssProfileLabels = getResources().getStringArray(R.array.gnss_profile_labels);
+        gnssProfileValues = getResources().getIntArray(R.array.gnss_profile_values);
+        if (gnssProfileDropdown != null) {
+            ArrayAdapter<String> profileAdapter =
+                    new NoFilterArrayAdapter(this, android.R.layout.simple_list_item_1, Arrays.asList(gnssProfileLabels));
+            gnssProfileDropdown.setAdapter(profileAdapter);
+            gnssProfileDropdown.setKeyListener(null);
+            gnssProfileDropdown.setText("", false);
+            gnssProfileDropdown.setOnItemClickListener((parent, view, position, id) -> {
+                if (position >= 0 && position < gnssProfileValues.length) {
+                    handleGnssProfileSelection(gnssProfileValues[position]);
+                }
+            });
+            gnssProfileDropdown.setOnClickListener(v -> showGnssProfileDropdown());
+            if (gnssProfileLayout != null) {
+                gnssProfileLayout.setEndIconOnClickListener(v -> {
+                    if (gnssProfileDropdown != null) {
+                        gnssProfileDropdown.requestFocus();
+                    }
+                    showGnssProfileDropdown();
+                });
+            }
+        }
 
         gpsBaudRateLabels = getResources().getStringArray(R.array.gps_baud_rate_labels);
         gpsBaudRateValues = getResources().getIntArray(R.array.gps_baud_rate_values);
@@ -598,6 +646,8 @@ public class MainActivity extends AppCompatActivity {
             boolean updateAp,
             @Nullable Boolean bridgeState,
             boolean updateBridge,
+            @Nullable Integer gnssProfileValue,
+            boolean updateGnssProfile,
             @Nullable Integer baudRate,
             boolean updateBaud,
             @Nullable String ssid
@@ -609,6 +659,9 @@ public class MainActivity extends AppCompatActivity {
                     }
                     if (updateBridge) {
                         bridgeModeState = bridgeState;
+                    }
+                    if (updateGnssProfile) {
+                        gnssProfile = gnssProfileValue;
                     }
                     if (updateBaud) {
                         gpsBaudRate = baudRate;
@@ -623,10 +676,21 @@ public class MainActivity extends AppCompatActivity {
     private void applyDeviceSettingsUpdate(
             @Nullable Boolean apState,
             @Nullable Boolean bridgeState,
+            @Nullable Integer gnssProfileValue,
             @Nullable Integer baudRate,
             @Nullable String ssid
     ) {
-        applyDeviceSettingsUpdate(apState, true, bridgeState, true, baudRate, true, ssid);
+        applyDeviceSettingsUpdate(
+                apState,
+                true,
+                bridgeState,
+                true,
+                gnssProfileValue,
+                true,
+                baudRate,
+                true,
+                ssid
+        );
     }
 
     private void updateDeviceSettingsUi() {
@@ -652,6 +716,23 @@ public class MainActivity extends AppCompatActivity {
             suppressBridgeSwitchChange = false;
         }
 
+        if (gnssProfileLayout != null && gnssProfileDropdown != null) {
+            gnssProfileLayout.setEnabled(connected);
+            gnssProfileDropdown.setEnabled(connected);
+            suppressGnssProfileChange = true;
+            if (gnssProfile != null) {
+                String label = findGnssProfileLabel(gnssProfile);
+                if (label != null) {
+                    gnssProfileDropdown.setText(label, false);
+                } else {
+                    gnssProfileDropdown.setText(String.valueOf(gnssProfile), false);
+                }
+            } else {
+                gnssProfileDropdown.setText("", false);
+            }
+            suppressGnssProfileChange = false;
+        }
+
         if (gpsBaudRateLayout != null && gpsBaudRateDropdown != null) {
             gpsBaudRateLayout.setEnabled(connected);
             gpsBaudRateDropdown.setEnabled(connected);
@@ -671,6 +752,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Nullable
+    private String findGnssProfileLabel(@Nullable Integer profileValue) {
+        if (profileValue == null || gnssProfileValues == null || gnssProfileLabels == null) {
+            return null;
+        }
+        int length = Math.min(gnssProfileValues.length, gnssProfileLabels.length);
+        for (int index = 0; index < length; index++) {
+            if (gnssProfileValues[index] == profileValue) {
+                return gnssProfileLabels[index];
+            }
+        }
+        return null;
+    }
+
+    @Nullable
     private String findGpsBaudLabel(@Nullable Integer baudRateValue) {
         if (baudRateValue == null || gpsBaudRateValues == null || gpsBaudRateLabels == null) {
             return null;
@@ -682,6 +777,22 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return null;
+    }
+
+    private void showGnssProfileDropdown() {
+        if (gnssProfileDropdown == null || !gnssProfileDropdown.isEnabled()) {
+            return;
+        }
+        gnssProfileDropdown.post(
+                () -> {
+                    if (gnssProfileDropdown == null || !gnssProfileDropdown.isEnabled()) {
+                        return;
+                    }
+                    if (gnssProfileDropdown.isAttachedToWindow()) {
+                        gnssProfileDropdown.showDropDown();
+                    }
+                }
+        );
     }
 
     private void showGpsBaudDropdown() {
@@ -842,6 +953,52 @@ public class MainActivity extends AppCompatActivity {
                     500
             );
         }
+    }
+
+    private void handleGnssProfileSelection(int desiredProfile) {
+        if (suppressGnssProfileChange) {
+            return;
+        }
+        if (gnssProfileDropdown != null) {
+            gnssProfileDropdown.dismissDropDown();
+        }
+        if (!isServiceReadyForSettings() || clientService == null) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            uiHandler.post(this::updateDeviceSettingsUi);
+            return;
+        }
+        Integer current = gnssProfile;
+        if (current != null && current == desiredProfile) {
+            return;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.settings_gnss_profile_dialog_title)
+                .setMessage(R.string.settings_gnss_profile_dialog_message)
+                .setPositiveButton(
+                        R.string.dialog_ok,
+                        (dialog, which) -> {
+                            if (clientService == null) {
+                                updateDeviceSettingsUi();
+                                return;
+                            }
+                            boolean accepted = clientService.requestGnssProfileChange(desiredProfile);
+                            if (!accepted) {
+                                Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                                updateDeviceSettingsUi();
+                                return;
+                            }
+                            uiHandler.postDelayed(
+                                    () -> {
+                                        if (clientService != null) {
+                                            clientService.refreshDeviceSettings();
+                                        }
+                                    },
+                                    500
+                            );
+                        })
+                .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> updateDeviceSettingsUi())
+                .setOnCancelListener(dialog -> updateDeviceSettingsUi())
+                .show();
     }
 
     private void handleGpsBaudSelection(int desiredBaudRate) {
