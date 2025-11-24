@@ -36,6 +36,10 @@ object BleUuids {
     val CHAR_GPS_BAUD_UUID: UUID = UUID.fromString("f3a1a816-28f2-4b6d-9f76-6f7aa2d06123")
     val CHAR_GNSS_PROFILE_UUID: UUID = UUID.fromString("1fd95e59-993e-4bf5-a0b7-f481508c9a94")
     val CHAR_KEEPALIVE_UUID: UUID = UUID.fromString("6b5d5304-4523-4db4-9a31-0f3d88c2ce11")
+    val OTA_SERVICE_UUID: UUID = UUID.fromString("c7b44a0c-24c6-4af3-97ec-19ff34d45095")
+    val CHAR_OTA_CONTROL_UUID: UUID = UUID.fromString("0f6f8ff7-1b61-4d44-9f31-3536c3a601a7")
+    val CHAR_OTA_DATA_UUID: UUID = UUID.fromString("cb08c9fd-6c57-4b51-8bbe-20f3214bf3e9")
+    val CHAR_OTA_STATUS_UUID: UUID = UUID.fromString("d19d3c86-9ba9-4a52-9244-99118bd88d08")
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 }
 
@@ -64,6 +68,7 @@ interface BleConnectionDataListener {
     fun onBridgeModeChanged(enabled: Boolean)
     fun onGpsBaudRateChanged(baudRate: Int)
     fun onGnssProfileChanged(profile: Int)
+    fun onOtaStatusReceived(status: String)
 }
 
 @SuppressLint("MissingPermission")
@@ -82,8 +87,12 @@ class ConnectionManager(
     private var foundDeviceDuringScan = false
     private val tag = "ConnectionManager"
     private var gpsService: android.bluetooth.BluetoothGattService? = null
+    private var otaService: android.bluetooth.BluetoothGattService? = null
     private var keepAliveRunnable: Runnable? = null
     private var keepAliveFailCount = 0
+    private var keepAliveRunning = false
+    private var keepAliveBlocked = false
+    private var currentMtu: Int = 23
 
     private val scanCallback =
         object : ScanCallback() {
@@ -147,7 +156,7 @@ class ConnectionManager(
 
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         Log.i(tag, "Disconnected from GATT server at ${device.address}")
-                        stopKeepAlive()
+                        stopKeepAliveLoop()
                         connectionListener?.onDisconnected(device)
                         closeGatt()
                     }
@@ -158,6 +167,7 @@ class ConnectionManager(
                 super.onMtuChanged(gatt, mtu, status)
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     Log.i(tag, "MTU changed to $mtu")
+                    currentMtu = mtu
                 } else {
                     Log.w(tag, "MTU change failed, status: $status, mtu: $mtu")
                 }
@@ -187,6 +197,17 @@ class ConnectionManager(
                         { enableNotificationsInternal(gatt, service, BleUuids.CHAR_STATUS_UUID) },
                         100
                     )
+
+                    val ota = gatt.getService(BleUuids.OTA_SERVICE_UUID)
+                    otaService = ota
+                    if (ota == null) {
+                        Log.w(tag, "OTA service ${BleUuids.OTA_SERVICE_UUID} not found")
+                    } else {
+                        handler.postDelayed(
+                            { enableNotificationsInternal(gatt, ota, BleUuids.CHAR_OTA_STATUS_UUID) },
+                            200
+                        )
+                    }
 
                     connectionListener?.onServicesDiscovered(gatt.device)
                 } else {
@@ -321,6 +342,7 @@ class ConnectionManager(
             when (uuid) {
                 BleUuids.CHAR_COORDINATES_UUID -> handleCoordinatesPayload(stringValue)
                 BleUuids.CHAR_STATUS_UUID -> handleStatusPayload(stringValue)
+                BleUuids.CHAR_OTA_STATUS_UUID -> connectionListener?.onOtaStatusReceived(stringValue)
                 BleUuids.CHAR_AP_CONTROL_UUID -> {
                     val enabled = stringValue == "1"
                     connectionListener?.onApControlChanged(enabled)
@@ -504,7 +526,7 @@ class ConnectionManager(
             Log.w(tag, "readCharacteristic($uuid) skipped: GATT not connected")
             return false
         }
-        val service = gpsService ?: run {
+        val service = resolveServiceForCharacteristic(uuid) ?: run {
             Log.w(tag, "readCharacteristic($uuid) skipped: service unavailable")
             return false
         }
@@ -513,11 +535,70 @@ class ConnectionManager(
     }
 
     fun writeCharacteristic(uuid: UUID, payload: String): Boolean {
+        val data = payload.toByteArray(Charsets.UTF_8)
+        return writeRawCharacteristic(uuid, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+    }
+
+    fun writeOtaControl(payload: String): Boolean {
+        val data = payload.toByteArray(Charsets.UTF_8)
+        return writeRawCharacteristic(
+            BleUuids.CHAR_OTA_CONTROL_UUID,
+            data,
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        )
+    }
+
+    fun writeOtaData(payload: ByteArray): Boolean {
+        val gatt = bluetoothGatt ?: run {
+            Log.w(tag, "writeOtaData skipped: GATT not connected")
+            return false
+        }
+        val service = resolveServiceForCharacteristic(BleUuids.CHAR_OTA_DATA_UUID) ?: run {
+            Log.w(tag, "writeOtaData skipped: OTA service unavailable")
+            return false
+        }
+        val characteristic = service.getCharacteristic(BleUuids.CHAR_OTA_DATA_UUID)
+            ?: run {
+                Log.e(tag, "OTA data characteristic not found for write")
+                return false
+            }
+        val supportsWrite =
+            (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
+        val supportsWriteNoResp =
+            (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+        val writeType =
+            when {
+                supportsWriteNoResp -> BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                supportsWrite -> BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                else -> {
+                    Log.e(tag, "OTA data characteristic is not writable (properties=${characteristic.properties})")
+                    return false
+                }
+            }
+        return writeRawCharacteristic(BleUuids.CHAR_OTA_DATA_UUID, payload, writeType)
+    }
+
+    fun hasOtaService(): Boolean = otaService != null
+
+    private fun resolveServiceForCharacteristic(uuid: UUID): android.bluetooth.BluetoothGattService? {
+        return when (uuid) {
+            BleUuids.CHAR_OTA_CONTROL_UUID,
+            BleUuids.CHAR_OTA_DATA_UUID,
+            BleUuids.CHAR_OTA_STATUS_UUID -> otaService
+            else -> gpsService
+        }
+    }
+
+    private fun writeRawCharacteristic(
+        uuid: UUID,
+        payload: ByteArray,
+        writeType: Int
+    ): Boolean {
         val gatt = bluetoothGatt ?: run {
             Log.w(tag, "writeCharacteristic($uuid) skipped: GATT not connected")
             return false
         }
-        val service = gpsService ?: run {
+        val service = resolveServiceForCharacteristic(uuid) ?: run {
             Log.w(tag, "writeCharacteristic($uuid) skipped: service unavailable")
             return false
         }
@@ -538,14 +619,13 @@ class ConnectionManager(
             return false
         }
 
-        val data = payload.toByteArray(Charsets.UTF_8)
-        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        characteristic.value = data
+        characteristic.writeType = writeType
+        characteristic.value = payload
         val result = gatt.writeCharacteristic(characteristic)
         if (!result) {
             Log.e(tag, "writeCharacteristic($uuid) failed to enqueue GATT write")
         } else {
-            Log.i(tag, "Enqueued write for $uuid payload=$payload")
+            Log.i(tag, "Enqueued write for $uuid payloadLength=${payload.size}")
         }
         return result
     }
@@ -701,15 +781,16 @@ class ConnectionManager(
             return
         }
         Log.i(tag, "Disconnecting from ${bluetoothGatt?.device?.address}")
-        stopKeepAlive()
+        stopKeepAliveLoop()
         bluetoothGatt?.disconnect()
     }
 
     fun closeGatt() {
-        stopKeepAlive()
+        stopKeepAliveLoop()
         bluetoothGatt?.close()
         bluetoothGatt = null
         gpsService = null
+        otaService = null
         Log.d(tag, "GATT client resources released")
     }
 
@@ -734,9 +815,17 @@ class ConnectionManager(
 
     @Synchronized
     fun startKeepAlive(delayMillis: Long = 0L) {
+        if (keepAliveBlocked) {
+            Log.d(tag, "Keepalive blocked, not starting loop")
+            return
+        }
+        if (keepAliveRunning) {
+            Log.d(tag, "Keepalive loop already running, ignoring start request")
+            return
+        }
         if (keepAliveRunnable != null) {
             Log.d(tag, "Keepalive loop already running, restarting")
-            stopKeepAlive()
+            stopKeepAliveLoop()
         }
         keepAliveFailCount = 0
         val service = gpsService ?: run {
@@ -762,6 +851,12 @@ class ConnectionManager(
         val runnable =
             object : Runnable {
                 override fun run() {
+                    if (keepAliveBlocked) {
+                        Log.d(tag, "Keepalive blocked, skipping tick")
+                        keepAliveRunning = false
+                        keepAliveRunnable = null
+                        return
+                    }
                     val timestampSeconds = (System.currentTimeMillis() / 1000L).toString()
                     Log.d(tag, "Sending keepalive timestamp=$timestampSeconds")
                     val enqueued = writeCharacteristic(BleUuids.CHAR_KEEPALIVE_UUID, timestampSeconds)
@@ -788,6 +883,7 @@ class ConnectionManager(
                 }
             }
         keepAliveRunnable = runnable
+        keepAliveRunning = true
         if (delayMillis <= 0L) {
             handler.post(runnable)
         } else {
@@ -797,13 +893,28 @@ class ConnectionManager(
     }
 
     @Synchronized
-    private fun stopKeepAlive() {
+    fun stopKeepAliveLoop() {
         val runnable = keepAliveRunnable ?: return
         handler.removeCallbacks(runnable)
         keepAliveRunnable = null
         keepAliveFailCount = 0
+        keepAliveRunning = false
         Log.d(tag, "Keepalive loop stopped")
     }
+
+    fun isKeepAliveRunning(): Boolean = keepAliveRunning
+
+    fun setKeepAliveBlocked(blocked: Boolean) {
+        keepAliveBlocked = blocked
+        if (blocked) {
+            stopKeepAliveLoop()
+            Log.d(tag, "Keepalive blocked")
+        } else {
+            Log.d(tag, "Keepalive unblocked")
+        }
+    }
+
+    fun getCurrentMtu(): Int = currentMtu
 
     companion object {
         private const val KEEPALIVE_INTERVAL_MS = 1_000L

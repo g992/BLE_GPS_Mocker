@@ -79,6 +79,27 @@
     <string name="settings_write_failed">Не удалось изменить настройку. Попробуйте ещё раз.</string>
     <string name="settings_not_connected">Устройство не подключено</string>
 
+    <!-- OTA -->
+    <string name="ota_section_title">OTA обновление</string>
+    <string name="ota_pick_file">Выбрать файл прошивки (.bin)</string>
+    <string name="ota_abort">Отменить обновление</string>
+    <string name="ota_status_idle">Готово к OTA</string>
+    <string name="ota_status_preparing">Подготовка %1$s…</string>
+    <string name="ota_status_sending">Передача %1$s</string>
+    <string name="ota_status_validating">Проверка прошивки…</string>
+    <string name="ota_status_ready">Прошивка записана, устройство перезагружается</string>
+    <string name="ota_status_error_generic">Ошибка OTA</string>
+    <string name="ota_status_aborted">OTA отменена</string>
+    <string name="ota_error_not_connected">Нет подключения к устройству</string>
+    <string name="ota_error_service_missing">OTA сервис недоступен на устройстве</string>
+    <string name="ota_error_file_read">Не удалось прочитать файл прошивки</string>
+    <string name="ota_error_start">Не удалось отправить команду START</string>
+    <string name="ota_error_chunk_enqueue">Не удалось отправить блок прошивки</string>
+    <string name="ota_error_finish">Не удалось отправить команду FINISH</string>
+    <string name="ota_error_disconnected">Соединение прервано во время OTA</string>
+    <string name="ota_progress_placeholder">Прогресс: —</string>
+    <string name="ota_progress_format">Прогресс: %1$.1f%% • %2$d / %3$d байт</string>
+
     <!-- Permissions -->
     <string name="permissions_section_title">Разрешения</string>
     <string name="all_permissions_granted">Все разрешения выданы</string>

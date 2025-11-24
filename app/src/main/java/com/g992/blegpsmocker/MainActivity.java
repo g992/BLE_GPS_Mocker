@@ -9,14 +9,17 @@ import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
+import android.database.Cursor;
 import android.graphics.drawable.Drawable;
 import android.location.Location;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.IBinder;
 import android.provider.Settings;
+import android.provider.OpenableColumns;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
@@ -51,6 +54,7 @@ import java.util.Locale;
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 1001;
     private static final int MOCK_LOCATION_SETTINGS_REQUEST_CODE = 1002;
+    private static final int OTA_FILE_PICK_REQUEST_CODE = 2001;
 
     private static final String[] REQUIRED_PERMISSIONS = {
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -85,6 +89,10 @@ public class MainActivity extends AppCompatActivity {
     private MaterialAutoCompleteTextView gnssProfileDropdown;
     private TextInputLayout gpsBaudRateLayout;
     private MaterialAutoCompleteTextView gpsBaudRateDropdown;
+    private MaterialButton otaSelectButton;
+    private MaterialButton otaAbortButton;
+    private TextView otaStatusText;
+    private TextView otaProgressText;
 
     @Nullable
     private Boolean apControlState = null;
@@ -99,6 +107,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean suppressBridgeSwitchChange = false;
     private boolean suppressGnssProfileChange = false;
     private boolean suppressGpsBaudChange = false;
+    private boolean otaInProgress = false;
     private int[] gnssProfileValues = new int[0];
     private String[] gnssProfileLabels = new String[0];
     private int[] gpsBaudRateValues = new int[0];
@@ -206,6 +215,22 @@ public class MainActivity extends AppCompatActivity {
                 }
             };
 
+    private final BroadcastReceiver otaStatusReceiver =
+            new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (!GNSSClientService.ACTION_OTA_STATUS.equals(intent.getAction())) {
+                        return;
+                    }
+                    String state = intent.getStringExtra(GNSSClientService.EXTRA_OTA_STATE);
+                    String message = intent.getStringExtra(GNSSClientService.EXTRA_OTA_MESSAGE);
+                    int total = intent.getIntExtra(GNSSClientService.EXTRA_OTA_TOTAL, 0);
+                    int received = intent.getIntExtra(GNSSClientService.EXTRA_OTA_RECEIVED, 0);
+                    String fileName = intent.getStringExtra(GNSSClientService.EXTRA_OTA_FILE_NAME);
+                    updateOtaStatus(state, message, total, received, fileName);
+                }
+            };
+
     private final ServiceConnection serviceConnection =
             new ServiceConnection() {
                 @Override
@@ -234,6 +259,7 @@ public class MainActivity extends AppCompatActivity {
                             clientService.getApControlSsidHint()
                     );
                     clientService.refreshDeviceSettings();
+                    clientService.emitCurrentOtaStatus();
                 }
 
                 @Override
@@ -274,6 +300,7 @@ public class MainActivity extends AppCompatActivity {
         unregisterReceiver(locationReceiver);
         unregisterReceiver(mockLocationStatusReceiver);
         unregisterReceiver(deviceSettingsReceiver);
+        unregisterReceiver(otaStatusReceiver);
         uiHandler.removeCallbacksAndMessages(null);
     }
 
@@ -298,6 +325,10 @@ public class MainActivity extends AppCompatActivity {
         gnssProfileDropdown = findViewById(R.id.gnssProfileDropdown);
         gpsBaudRateLayout = findViewById(R.id.gpsBaudRateLayout);
         gpsBaudRateDropdown = findViewById(R.id.gpsBaudRateDropdown);
+        otaSelectButton = findViewById(R.id.otaSelectButton);
+        otaAbortButton = findViewById(R.id.otaAbortButton);
+        otaStatusText = findViewById(R.id.otaStatusText);
+        otaProgressText = findViewById(R.id.otaProgressText);
 
         gnssProfileLabels = getResources().getStringArray(R.array.gnss_profile_labels);
         gnssProfileValues = getResources().getIntArray(R.array.gnss_profile_values);
@@ -381,6 +412,8 @@ public class MainActivity extends AppCompatActivity {
             }
             handleBridgeSwitchToggle(isChecked);
         });
+        otaSelectButton.setOnClickListener(v -> openFirmwarePicker());
+        otaAbortButton.setOnClickListener(v -> abortOtaUpdate());
         updateServiceStatus();
         updateDeviceSettingsUi();
     }
@@ -399,17 +432,20 @@ public class MainActivity extends AppCompatActivity {
         IntentFilter locationFilter = new IntentFilter(GNSSClientService.ACTION_LOCATION_UPDATE);
         IntentFilter mockStatusFilter = new IntentFilter(GNSSClientService.ACTION_MOCK_LOCATION_STATUS);
         IntentFilter settingsFilter = new IntentFilter(GNSSClientService.ACTION_DEVICE_SETTINGS_CHANGED);
+        IntentFilter otaFilter = new IntentFilter(GNSSClientService.ACTION_OTA_STATUS);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(connectionReceiver, connectionFilter, Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(locationReceiver, locationFilter, Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(mockLocationStatusReceiver, mockStatusFilter, Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(deviceSettingsReceiver, settingsFilter, Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(otaStatusReceiver, otaFilter, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(connectionReceiver, connectionFilter);
             registerReceiver(locationReceiver, locationFilter);
             registerReceiver(mockLocationStatusReceiver, mockStatusFilter);
             registerReceiver(deviceSettingsReceiver, settingsFilter);
+            registerReceiver(otaStatusReceiver, otaFilter);
         }
     }
 
@@ -435,6 +471,76 @@ public class MainActivity extends AppCompatActivity {
         updateServiceStatus();
         updateConnectionStatus(false);
         Toast.makeText(this, getString(R.string.toast_service_disabled), Toast.LENGTH_LONG).show();
+    }
+
+    private void openFirmwarePicker() {
+        if (!isServiceReadyForSettings()) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            updateOtaControlsState();
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.setType("*/*");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                new String[]{"application/octet-stream", "application/binary", "application/x-binary"}
+        );
+        startActivityForResult(intent, OTA_FILE_PICK_REQUEST_CODE);
+    }
+
+    private void handleFirmwareSelected(@NonNull Uri uri) {
+        if (!isServiceReadyForSettings() || clientService == null) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            updateOtaControlsState();
+            return;
+        }
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+            );
+        } catch (Exception ignored) {
+        }
+        String displayName = resolveDisplayName(uri);
+        clientService.startOtaUpdate(uri, displayName);
+        otaStatusText.setText(getString(R.string.ota_status_preparing, displayName));
+        otaAbortButton.setVisibility(View.VISIBLE);
+        otaAbortButton.setEnabled(true);
+        otaInProgress = true;
+        updateOtaControlsState();
+    }
+
+    private void abortOtaUpdate() {
+        if (clientService != null) {
+            clientService.abortOtaUpdate();
+        }
+        otaInProgress = false;
+        updateOtaControlsState();
+    }
+
+    @Nullable
+    private String resolveDisplayName(@NonNull Uri uri) {
+        String result = null;
+        Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(uri, null, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                int column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (column >= 0) {
+                    result = cursor.getString(column);
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+        if (result == null || result.isEmpty()) {
+            result = uri.getLastPathSegment();
+        }
+        return result != null ? result : getString(R.string.unknown);
     }
 
     private void updateServiceStatus() {
@@ -514,6 +620,69 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void updateOtaStatus(
+            @Nullable String state,
+            @Nullable String message,
+            int total,
+            int received,
+            @Nullable String fileName
+    ) {
+        runOnUiThread(
+                () -> {
+                    String statusText;
+                    if (message != null && !message.isEmpty()) {
+                        statusText = message;
+                    } else if ("validating".equals(state)) {
+                        statusText = getString(R.string.ota_status_validating);
+                    } else if ("ready".equals(state)) {
+                        statusText = getString(R.string.ota_status_ready);
+                    } else if ("error".equals(state)) {
+                        statusText = getString(R.string.ota_status_error_generic);
+                    } else if (("sending".equals(state) || "chunk_ack".equals(state) || "receiving".equals(state)) && fileName != null) {
+                        statusText = getString(R.string.ota_status_sending, fileName);
+                    } else if ("preparing".equals(state) && fileName != null) {
+                        statusText = getString(R.string.ota_status_preparing, fileName);
+                    } else {
+                        statusText = getString(R.string.ota_status_idle);
+                    }
+                    otaStatusText.setText(statusText);
+                    if (total > 0) {
+                        double percent = (received * 100.0) / total;
+                        otaProgressText.setText(
+                                String.format(
+                                        Locale.getDefault(),
+                                        getString(R.string.ota_progress_format),
+                                        percent,
+                                        received,
+                                        total
+                                )
+                        );
+                    } else {
+                        otaProgressText.setText(getString(R.string.ota_progress_placeholder));
+                    }
+                    boolean active =
+                            state != null
+                                    && !state.isEmpty()
+                                    && !"idle".equals(state)
+                                    && !"ready".equals(state)
+                                    && !"error".equals(state);
+                    otaInProgress = active;
+                    otaAbortButton.setVisibility(active ? View.VISIBLE : View.GONE);
+                    otaAbortButton.setEnabled(active);
+                    updateOtaControlsState();
+                });
+    }
+
+    private void updateOtaControlsState() {
+        boolean canStart = isServiceReadyForSettings() && !otaInProgress;
+        if (otaSelectButton != null) {
+            otaSelectButton.setEnabled(canStart);
+        }
+        if (otaAbortButton != null && !otaInProgress) {
+            otaAbortButton.setVisibility(View.GONE);
+        }
+    }
+
     private String getPermissionName(String permission) {
         if (Manifest.permission.ACCESS_FINE_LOCATION.equals(permission)) {
             return getString(R.string.permission_fine_location);
@@ -579,6 +748,12 @@ public class MainActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == MOCK_LOCATION_SETTINGS_REQUEST_CODE) {
             updatePermissionsStatus();
+        }
+        if (requestCode == OTA_FILE_PICK_REQUEST_CODE && resultCode == RESULT_OK && data != null) {
+            Uri uri = data.getData();
+            if (uri != null) {
+                handleFirmwareSelected(uri);
+            }
         }
     }
 
@@ -749,6 +924,8 @@ public class MainActivity extends AppCompatActivity {
             }
             suppressGpsBaudChange = false;
         }
+
+        updateOtaControlsState();
     }
 
     @Nullable
