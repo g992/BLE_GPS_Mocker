@@ -35,11 +35,20 @@ object BleUuids {
     val CHAR_MODE_CONTROL_UUID: UUID = UUID.fromString("d047f6b3-5f7c-4e5b-9c21-4c0f2b6a8f10")
     val CHAR_GPS_BAUD_UUID: UUID = UUID.fromString("f3a1a816-28f2-4b6d-9f76-6f7aa2d06123")
     val CHAR_GNSS_PROFILE_UUID: UUID = UUID.fromString("1fd95e59-993e-4bf5-a0b7-f481508c9a94")
+    val CHAR_BASE_SETTINGS_PROFILE_UUID: UUID =
+        UUID.fromString("7f0c9ad9-c6e8-4d2a-b3c1-1703708c6c2d")
+    val CHAR_CUSTOM_GNSS_PROFILE_UUID: UUID =
+        UUID.fromString("0abf4f57-12a2-47d9-9c61-96e0d47f332b")
+    val CHAR_CUSTOM_BASE_SETTINGS_UUID: UUID =
+        UUID.fromString("4b88f5a8-3b35-4c64-a241-0c7fdfced0e0")
     val CHAR_KEEPALIVE_UUID: UUID = UUID.fromString("6b5d5304-4523-4db4-9a31-0f3d88c2ce11")
     val OTA_SERVICE_UUID: UUID = UUID.fromString("c7b44a0c-24c6-4af3-97ec-19ff34d45095")
     val CHAR_OTA_CONTROL_UUID: UUID = UUID.fromString("0f6f8ff7-1b61-4d44-9f31-3536c3a601a7")
     val CHAR_OTA_DATA_UUID: UUID = UUID.fromString("cb08c9fd-6c57-4b51-8bbe-20f3214bf3e9")
     val CHAR_OTA_STATUS_UUID: UUID = UUID.fromString("d19d3c86-9ba9-4a52-9244-99118bd88d08")
+    val CHAR_WIFI_STATUS_UUID: UUID = UUID.fromString("9b9a3f07-3a36-4c74-a48a-4ad0d68f1d39")
+    val CHAR_DEVICE_VERSION_UUID: UUID = UUID.fromString("c4e6f890-6b5e-4f1b-9d2e-7a3c8d2f1b01")
+    val CHAR_INPUT_VOLTAGE_UUID: UUID = UUID.fromString("81b2c6f8-cb9e-4069-9a2e-9e5abca5d56e")
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 }
 
@@ -68,7 +77,14 @@ interface BleConnectionDataListener {
     fun onBridgeModeChanged(enabled: Boolean)
     fun onGpsBaudRateChanged(baudRate: Int)
     fun onGnssProfileChanged(profile: Int)
+    fun onBaseSettingsProfileChanged(profile: Int)
+    fun onCustomGnssProfileFrameChanged(frame: String)
+    fun onCustomBaseSettingsFrameChanged(frame: String)
     fun onOtaStatusReceived(status: String)
+    fun onOtaGuardStateChanged(enabled: Boolean)
+    fun onWifiStatusReceived(status: String, ip: String?)
+    fun onDeviceVersionReceived(version: String)
+    fun onInputVoltageReceived(voltage: Double)
 }
 
 @SuppressLint("MissingPermission")
@@ -197,6 +213,10 @@ class ConnectionManager(
                         { enableNotificationsInternal(gatt, service, BleUuids.CHAR_STATUS_UUID) },
                         100
                     )
+                    handler.postDelayed(
+                        { enableNotificationsInternal(gatt, service, BleUuids.CHAR_INPUT_VOLTAGE_UUID) },
+                        150
+                    )
 
                     val ota = gatt.getService(BleUuids.OTA_SERVICE_UUID)
                     otaService = ota
@@ -206,6 +226,10 @@ class ConnectionManager(
                         handler.postDelayed(
                             { enableNotificationsInternal(gatt, ota, BleUuids.CHAR_OTA_STATUS_UUID) },
                             200
+                        )
+                        handler.postDelayed(
+                            { enableNotificationsInternal(gatt, ota, BleUuids.CHAR_OTA_CONTROL_UUID) },
+                            300
                         )
                     }
 
@@ -367,6 +391,29 @@ class ConnectionManager(
                         Log.w(tag, "Invalid GNSS profile payload: $stringValue")
                     }
                 }
+                BleUuids.CHAR_BASE_SETTINGS_PROFILE_UUID -> {
+                    val profile = stringValue.toIntOrNull()
+                    if (profile != null) {
+                        connectionListener?.onBaseSettingsProfileChanged(profile)
+                    } else {
+                        Log.w(tag, "Invalid base settings profile payload: $stringValue")
+                    }
+                }
+                BleUuids.CHAR_CUSTOM_GNSS_PROFILE_UUID -> {
+                    connectionListener?.onCustomGnssProfileFrameChanged(stringValue)
+                }
+                BleUuids.CHAR_CUSTOM_BASE_SETTINGS_UUID -> {
+                    connectionListener?.onCustomBaseSettingsFrameChanged(stringValue)
+                }
+                BleUuids.CHAR_OTA_CONTROL_UUID -> {
+                    val enabled = stringValue == "1"
+                    connectionListener?.onOtaGuardStateChanged(enabled)
+                }
+                BleUuids.CHAR_WIFI_STATUS_UUID -> handleWifiStatusPayload(stringValue)
+                BleUuids.CHAR_DEVICE_VERSION_UUID -> {
+                    connectionListener?.onDeviceVersionReceived(stringValue)
+                }
+                BleUuids.CHAR_INPUT_VOLTAGE_UUID -> handleInputVoltagePayload(stringValue)
                 else -> Log.d(tag, "No specific parsing for UUID $uuid")
             }
         } catch (exception: Exception) {
@@ -436,6 +483,26 @@ class ConnectionManager(
         } catch (exception: Exception) {
             Log.w(tag, "Invalid Status JSON: $raw", exception)
         }
+    }
+
+    private fun handleWifiStatusPayload(raw: String) {
+        try {
+            val payload = JSONObject(raw)
+            val status = payload.optString("st", "unknown")
+            val ip = payload.optString("ip").takeIf { it.isNotBlank() }
+            connectionListener?.onWifiStatusReceived(status, ip)
+        } catch (exception: Exception) {
+            Log.w(tag, "Invalid Wi-Fi status JSON: $raw", exception)
+        }
+    }
+
+    private fun handleInputVoltagePayload(raw: String) {
+        val voltage = runCatching { JSONObject(raw).optDouble("vin") }.getOrNull()
+        if (voltage == null || voltage.isNaN()) {
+            Log.w(tag, "Invalid input voltage payload: $raw")
+            return
+        }
+        connectionListener?.onInputVoltageReceived(voltage)
     }
 
     private fun StringBuilder.appendSignals(array: JSONArray) {
@@ -581,12 +648,27 @@ class ConnectionManager(
     fun hasOtaService(): Boolean = otaService != null
 
     private fun resolveServiceForCharacteristic(uuid: UUID): android.bluetooth.BluetoothGattService? {
-        return when (uuid) {
-            BleUuids.CHAR_OTA_CONTROL_UUID,
-            BleUuids.CHAR_OTA_DATA_UUID,
-            BleUuids.CHAR_OTA_STATUS_UUID -> otaService
-            else -> gpsService
+        val mapped =
+            when (uuid) {
+                BleUuids.CHAR_OTA_CONTROL_UUID,
+                BleUuids.CHAR_OTA_DATA_UUID,
+                BleUuids.CHAR_OTA_STATUS_UUID,
+                BleUuids.CHAR_WIFI_STATUS_UUID -> otaService
+                else -> gpsService
+            }
+        if (mapped != null && mapped.getCharacteristic(uuid) != null) {
+            return mapped
         }
+        val gatt = bluetoothGatt ?: return mapped
+        val dynamic = gatt.services?.firstOrNull { service ->
+            service.getCharacteristic(uuid) != null
+        }
+        if (dynamic != null && mapped == null) {
+            if (uuid == BleUuids.CHAR_WIFI_STATUS_UUID) {
+                otaService = dynamic
+            }
+        }
+        return dynamic ?: mapped
     }
 
     private fun writeRawCharacteristic(

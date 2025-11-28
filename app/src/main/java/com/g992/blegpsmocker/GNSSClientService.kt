@@ -10,7 +10,6 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.location.provider.ProviderProperties
-import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
@@ -21,16 +20,10 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
-import java.util.zip.CRC32
 import java.util.UUID
 import org.json.JSONObject
+import kotlin.random.Random
 
 private const val TAG = "GNSSClientService"
 private const val DEFAULT_HDOP_FALLBACK = 1.5
@@ -44,22 +37,26 @@ private const val RESCAN_DELAY_MS = 3_000L
 private const val STATIC_AP_SSID = "GPS-C3-xxxxxx"
 private const val GPS_BAUD_MIN = 4_800
 private const val GPS_BAUD_MAX = 921_600
-private const val OTA_CHUNK_MAX_BYTES = 480
-private const val OTA_START_RETRY_MAX = 3
-private const val OTA_START_RETRY_DELAY_MS = 200L
-private val GNSS_PROFILE_VALUES = setOf(0, 1, 2)
+private val GNSS_PROFILE_VALUES = setOf(0, 1, 2, 3)
+private val BASE_SETTINGS_PROFILE_VALUES = setOf(0, 1)
 private const val DEVICE_SETTING_READ_RETRY_MAX = 3
 private const val DEVICE_SETTING_READ_RETRY_DELAY_MS = 300L
+private const val OTA_PORTAL_PATH = "/update"
+private const val OTA_AP_FALLBACK_HOST = "192.168.4.1"
+private const val IDLE_DRIFT_DELAY_MS = 3_000L
+private const val IDLE_DRIFT_INTERVAL_MS = 3_000L
+private const val MIN_DRIFT_SPEED_MPS = 0.1
+private const val MIN_DRIFT_RADIUS_METERS = 0.3
 
-data class OtaStatus(
-    val state: String,
-    val message: String? = null,
-    val total: Int = 0,
-    val received: Int = 0,
-    val next: Int? = null,
-    val offset: Int? = null,
-    val fileName: String? = null
-)
+data class OtaPortalState(
+    val enabled: Boolean = false,
+    val wifiStatus: String = "unknown",
+    val ip: String? = null,
+    val message: String? = null
+) {
+    val portalUrl: String?
+        get() = ip?.takeIf { it.isNotBlank() }?.let { "http://$it$OTA_PORTAL_PATH" }
+}
 
 class GNSSClientService :
     Service(),
@@ -83,12 +80,13 @@ class GNSSClientService :
     private val mockProvidersConfigured = AtomicBoolean(false)
 
     private var isConnected = false
-    @Volatile
-    private var otaStarting = false
     private var lastReceivedLocation: Location? = null
     private var lastUpdateTime: Long = 0L
     private var lastCoordinatesTimestamp: Long = 0L
     private var lastProvider: String? = null
+    private var hasReceivedModuleFix = false
+    private var lastRealUpdateTimestamp: Long = 0L
+    private var lastRealLocation: Location? = null
 
     private var hdop: Double? = null
     private var signalLevels: String? = null
@@ -100,12 +98,15 @@ class GNSSClientService :
     private var bridgeModeEnabled: Boolean? = null
     private var gpsBaudRate: Int? = null
     private var gnssProfile: Int? = null
-    private val otaExecutor = Executors.newSingleThreadExecutor()
-    private val otaLock = Any()
-    private var otaSession: OtaSession? = null
-    private val lastOtaStatus = AtomicReference<OtaStatus?>(null)
-    private var keepAlivePausedForOta = false
-    private var waitingForOtaStartAck = false
+    private var baseSettingsProfile: Int? = null
+    private var customGnssProfileFrame: String? = null
+    private var customBaseSettingsFrame: String? = null
+    private var deviceVersion: String? = null
+    private var inputVoltage: Double? = null
+    private var otaPortalState = OtaPortalState()
+    private var otaGuardPending = false
+    private var alwaysMovingEnabled = false
+    private val idleMovementRunnable = Runnable { emitIdleMovement() }
 
     override fun onCreate() {
         super.onCreate()
@@ -124,13 +125,8 @@ class GNSSClientService :
             }.getOrNull()
         Log.d(TAG, "Current mock_location_app = $currentMockApp")
         serviceRunning = true
-        otaStarting = false
-        lastOtaStatus.set(
-            OtaStatus(
-                state = "idle",
-                message = getString(R.string.ota_status_idle)
-            )
-        )
+        otaPortalState = OtaPortalState(message = getString(R.string.ota_status_closed))
+        alwaysMovingEnabled = AppPrefs.isAlwaysMovingEnabled(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -139,6 +135,7 @@ class GNSSClientService :
             NotificationUtils.buildStatusNotification(this, isConnected, null)
         )
         ensureConnectionManager()
+        alwaysMovingEnabled = AppPrefs.isAlwaysMovingEnabled(this)
         if (AppPrefs.isMockEnabled(this)) {
             startBleWorkflow()
         } else {
@@ -159,10 +156,6 @@ class GNSSClientService :
                 it.release()
             }
         }
-        synchronized(otaLock) {
-            otaSession = null
-        }
-        otaExecutor.shutdownNow()
         disableTestProviders()
         serviceRunning = false
     }
@@ -182,6 +175,25 @@ class GNSSClientService :
     fun getGpsBaudRate(): Int? = gpsBaudRate
 
     fun getGnssProfile(): Int? = gnssProfile
+
+    fun getBaseSettingsProfile(): Int? = baseSettingsProfile
+
+    fun getCustomGnssProfileFrame(): String? = customGnssProfileFrame
+
+    fun getCustomBaseSettingsFrame(): String? = customBaseSettingsFrame
+
+    fun getDeviceVersion(): String? = deviceVersion
+
+    fun getInputVoltage(): Double? = inputVoltage
+
+    fun setAlwaysMovingEnabled(enabled: Boolean) {
+        alwaysMovingEnabled = enabled
+        if (!enabled) {
+            handler.removeCallbacks(idleMovementRunnable)
+        } else if (hasReceivedModuleFix) {
+            scheduleIdleMovement()
+        }
+    }
 
     fun requestApControlChange(enabled: Boolean): Boolean {
         if (!isConnected) {
@@ -231,6 +243,54 @@ class GNSSClientService :
             ?: false
     }
 
+    fun requestBaseSettingsProfileChange(profile: Int): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "requestBaseSettingsProfileChange skipped: not connected")
+            return false
+        }
+        if (!BASE_SETTINGS_PROFILE_VALUES.contains(profile)) {
+            Log.w(TAG, "requestBaseSettingsProfileChange skipped: unsupported profile $profile")
+            return false
+        }
+        val payload = profile.toString()
+        return connectionManager?.writeCharacteristic(
+            BleUuids.CHAR_BASE_SETTINGS_PROFILE_UUID,
+            payload
+        ) ?: false
+    }
+
+    fun updateCustomGnssProfileFrame(frame: String): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "updateCustomGnssProfileFrame skipped: not connected")
+            return false
+        }
+        val sanitized = frame.trim()
+        if (sanitized.isEmpty()) {
+            Log.w(TAG, "updateCustomGnssProfileFrame skipped: empty payload")
+            return false
+        }
+        return connectionManager?.writeCharacteristic(
+            BleUuids.CHAR_CUSTOM_GNSS_PROFILE_UUID,
+            sanitized
+        ) ?: false
+    }
+
+    fun updateCustomBaseSettingsFrame(frame: String): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "updateCustomBaseSettingsFrame skipped: not connected")
+            return false
+        }
+        val sanitized = frame.trim()
+        if (sanitized.isEmpty()) {
+            Log.w(TAG, "updateCustomBaseSettingsFrame skipped: empty payload")
+            return false
+        }
+        return connectionManager?.writeCharacteristic(
+            BleUuids.CHAR_CUSTOM_BASE_SETTINGS_UUID,
+            sanitized
+        ) ?: false
+    }
+
     fun refreshDeviceSettings() {
         requestDeviceSettingsRead()
     }
@@ -265,6 +325,10 @@ class GNSSClientService :
             manager.disconnect()
         }
         isConnected = false
+        handler.removeCallbacks(idleMovementRunnable)
+        hasReceivedModuleFix = false
+        lastRealUpdateTimestamp = 0L
+        lastRealLocation = null
         updateNotification()
     }
 
@@ -397,11 +461,17 @@ class GNSSClientService :
         }
     }
 
-    private fun handleLocationUpdate(latitude: Double, longitude: Double) {
+    private fun handleLocationUpdate(
+        latitude: Double,
+        longitude: Double,
+        synthetic: Boolean = false,
+        speedOverride: Double? = null,
+        bearingOverride: Float? = null
+    ): Location? {
         if (!isReceivingUpdates.get()) {
             startReceivingLocationUpdates()
             if (!isReceivingUpdates.get()) {
-                return
+                return null
             }
         }
 
@@ -410,7 +480,7 @@ class GNSSClientService :
         val now = System.currentTimeMillis()
         if (lastUpdateTime > 0 && now - lastUpdateTime < 200) {
             Log.v(TAG, "Skipping mock update due to rate limit: ${now - lastUpdateTime}ms since last")
-            return
+            return null
         }
 
         if (lastUpdateTime > 0L) {
@@ -429,7 +499,7 @@ class GNSSClientService :
 
         val accuracy = computeAccuracyMeters()
         val altitude = resolveAltitudeMeters()
-        val speed = resolveSpeedMetersPerSecond(latitude, longitude, timestamp)
+        val speed = speedOverride ?: resolveSpeedMetersPerSecond(latitude, longitude, timestamp)
         Log.d(
             TAG,
             "Resolved location data accuracy=$accuracy altitude=${altitude ?: "n/a"} speed=${speed ?: "n/a"} hdop=$hdop"
@@ -446,10 +516,12 @@ class GNSSClientService :
             if (speed != null) {
                 this.speed = speed.toFloat()
             }
+            if (bearingOverride != null) {
+                this.bearing = bearingOverride
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
                 this.elapsedRealtimeNanos = elapsedNanos
             }
-            // Do not set bearing – BLE heading is not forwarded to Android location.
         }
 
         val providers = registeredProviders.ifEmpty { providerCandidates }
@@ -504,6 +576,59 @@ class GNSSClientService :
             TAG,
             "Location broadcast lat=${baseLocation.latitude} lon=${baseLocation.longitude} accuracy=${baseLocation.accuracy} satellites=$satellites providers=${providers.joinToString()}"
         )
+        return baseLocation
+    }
+
+    private fun scheduleIdleMovement() {
+        handler.removeCallbacks(idleMovementRunnable)
+        if (!alwaysMovingEnabled || !hasReceivedModuleFix) {
+            return
+        }
+        handler.postDelayed(idleMovementRunnable, IDLE_DRIFT_DELAY_MS)
+    }
+
+    private fun emitIdleMovement() {
+        if (!alwaysMovingEnabled || !hasReceivedModuleFix) {
+            return
+        }
+        val origin = lastRealLocation ?: lastReceivedLocation ?: return
+        val idleDuration = System.currentTimeMillis() - lastRealUpdateTimestamp
+        if (idleDuration < IDLE_DRIFT_DELAY_MS) {
+            scheduleIdleMovement()
+            return
+        }
+        val bearing = Random.nextDouble(0.0, 360.0)
+        val (targetLat, targetLon) = offsetCoordinates(origin, MIN_DRIFT_RADIUS_METERS, bearing)
+        handleLocationUpdate(
+            targetLat,
+            targetLon,
+            synthetic = true,
+            speedOverride = MIN_DRIFT_SPEED_MPS,
+            bearingOverride = bearing.toFloat()
+        )
+        handler.postDelayed(idleMovementRunnable, IDLE_DRIFT_INTERVAL_MS)
+    }
+
+    private fun offsetCoordinates(
+        origin: Location,
+        distanceMeters: Double,
+        bearingDegrees: Double
+    ): Pair<Double, Double> {
+        val earthRadius = 6_371_000.0
+        val distanceRatio = distanceMeters / earthRadius
+        val bearingRad = Math.toRadians(bearingDegrees)
+        val lat1 = Math.toRadians(origin.latitude)
+        val lon1 = Math.toRadians(origin.longitude)
+        val lat2 = Math.asin(
+            Math.sin(lat1) * Math.cos(distanceRatio) +
+                Math.cos(lat1) * Math.sin(distanceRatio) * Math.cos(bearingRad)
+        )
+        val lon2 =
+            lon1 + Math.atan2(
+                Math.sin(bearingRad) * Math.sin(distanceRatio) * Math.cos(lat1),
+                Math.cos(distanceRatio) - Math.sin(lat1) * Math.sin(lat2)
+            )
+        return Pair(Math.toDegrees(lat2), Math.toDegrees(lon2))
     }
 
     private fun computeAccuracyMeters(): Float {
@@ -565,21 +690,15 @@ class GNSSClientService :
         var strong = 0
         var medium = 0
         var weak = 0
+        // API contract: signals array contains ASCII digits '1'/'2'/'3' for weak/medium/strong buckets.
         rawLevels.split(',')
             .map { it.trim() }
             .forEach { token ->
-                val value = token.toIntOrNull() ?: return@forEach
-                when {
-                    value >= SATELLITE_SIGNAL_STRONG_THRESHOLD -> strong++
-                    value >= SATELLITE_SIGNAL_MEDIUM_THRESHOLD -> medium++
-                    value > 0 -> {
-                        when {
-                            value >= 3 -> strong++
-                            value == 2 -> medium++
-                            value == 1 -> weak++
-                            else -> weak++
-                        }
-                    }
+                when (token.toIntOrNull()) {
+                    3 -> strong++
+                    2 -> medium++
+                    1, 0 -> weak++
+                    else -> Unit
                 }
             }
         return SatelliteSignalBreakdown(strong, medium, weak)
@@ -627,10 +746,20 @@ class GNSSClientService :
         intent.putExtra(EXTRA_BRIDGE_MODE_KNOWN, bridgeModeEnabled != null)
         intent.putExtra(EXTRA_GPS_BAUD_KNOWN, gpsBaudRate != null)
         intent.putExtra(EXTRA_GNSS_PROFILE_KNOWN, gnssProfile != null)
+        intent.putExtra(EXTRA_BASE_SETTINGS_PROFILE_KNOWN, baseSettingsProfile != null)
+        intent.putExtra(EXTRA_CUSTOM_GNSS_PROFILE_KNOWN, customGnssProfileFrame != null)
+        intent.putExtra(EXTRA_CUSTOM_BASE_SETTINGS_KNOWN, customBaseSettingsFrame != null)
+        intent.putExtra(EXTRA_DEVICE_VERSION_KNOWN, deviceVersion != null)
+        intent.putExtra(EXTRA_INPUT_VOLTAGE_KNOWN, inputVoltage != null)
         apControlEnabled?.let { intent.putExtra(EXTRA_AP_CONTROL_ENABLED, it) }
         bridgeModeEnabled?.let { intent.putExtra(EXTRA_BRIDGE_MODE_ENABLED, it) }
         gpsBaudRate?.let { intent.putExtra(EXTRA_GPS_BAUD_RATE, it) }
         gnssProfile?.let { intent.putExtra(EXTRA_GNSS_PROFILE, it) }
+        baseSettingsProfile?.let { intent.putExtra(EXTRA_BASE_SETTINGS_PROFILE, it) }
+        customGnssProfileFrame?.let { intent.putExtra(EXTRA_CUSTOM_GNSS_PROFILE_FRAME, it) }
+        customBaseSettingsFrame?.let { intent.putExtra(EXTRA_CUSTOM_BASE_SETTINGS_FRAME, it) }
+        deviceVersion?.let { intent.putExtra(EXTRA_DEVICE_VERSION, it) }
+        inputVoltage?.let { intent.putExtra(EXTRA_INPUT_VOLTAGE, it) }
         intent.putExtra(EXTRA_AP_SSID_HINT, STATIC_AP_SSID)
         sendBroadcast(intent)
     }
@@ -652,10 +781,6 @@ class GNSSClientService :
     }
 
     private fun requestDeviceSettingsRead() {
-        if (otaSession != null || otaStarting) {
-            Log.d(TAG, "Skipping device settings read: OTA in progress")
-            return
-        }
         if (!isConnected) {
             Log.d(TAG, "Skipping device settings read: BLE not connected")
             return
@@ -673,15 +798,31 @@ class GNSSClientService :
             { readDeviceSetting(BleUuids.CHAR_GNSS_PROFILE_UUID) },
             600
         )
+        handler.postDelayed(
+            { readDeviceSetting(BleUuids.CHAR_BASE_SETTINGS_PROFILE_UUID) },
+            800
+        )
+        handler.postDelayed(
+            { readDeviceSetting(BleUuids.CHAR_CUSTOM_GNSS_PROFILE_UUID) },
+            1000
+        )
+        handler.postDelayed(
+            { readDeviceSetting(BleUuids.CHAR_CUSTOM_BASE_SETTINGS_UUID) },
+            1200
+        )
+        handler.postDelayed(
+            { readDeviceSetting(BleUuids.CHAR_DEVICE_VERSION_UUID) },
+            1400
+        )
+        handler.postDelayed(
+            { readDeviceSetting(BleUuids.CHAR_INPUT_VOLTAGE_UUID) },
+            1600
+        )
     }
 
     private fun readDeviceSetting(uuid: UUID, attempt: Int = 0) {
         val manager = connectionManager ?: return
         if (!isConnected) {
-            return
-        }
-        if (otaSession != null) {
-            Log.d(TAG, "Skipping device setting read during OTA for $uuid")
             return
         }
         val success = manager.readCharacteristic(uuid)
@@ -695,472 +836,80 @@ class GNSSClientService :
         }
     }
 
-    fun startOtaUpdate(uri: Uri, fileName: String? = null) {
-        otaStarting = true
-        waitingForOtaStartAck = true
+    fun requestOtaPortal(enable: Boolean): Boolean {
         if (!isConnected) {
-            otaStarting = false
-            waitingForOtaStartAck = false
-            broadcastOtaStatus(
-                OtaStatus(
-                    state = "error",
-                    message = getString(R.string.ota_error_not_connected)
-                )
-            )
-            return
-        }
-        val manager = connectionManager
-        if (manager == null || !manager.hasOtaService()) {
-            otaStarting = false
-            waitingForOtaStartAck = false
-            broadcastOtaStatus(
-                OtaStatus(
-                    state = "error",
-                    message = getString(R.string.ota_error_service_missing)
-                )
-            )
-            return
-        }
-        pauseKeepAliveForOta(manager)
-        synchronized(otaLock) {
-            if (otaSession != null) {
-                Log.w(TAG, "OTA already in progress")
-                lastOtaStatus.get()?.let { broadcastOtaStatus(it) }
-                otaStarting = false
-                waitingForOtaStartAck = false
-                return
-            }
-        }
-        val displayName =
-            fileName?.takeIf { it.isNotBlank() } ?: (uri.lastPathSegment ?: "firmware.bin")
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "preparing",
-                message = getString(R.string.ota_status_preparing, displayName),
-                fileName = displayName
-            )
-        )
-        otaExecutor.execute {
-            val session = prepareOtaSession(uri, displayName)
-            if (session == null) {
-                otaStarting = false
-                waitingForOtaStartAck = false
-                handleOtaFailure(getString(R.string.ota_error_file_read))
-                return@execute
-            }
-            synchronized(otaLock) {
-                otaSession = session
-            }
-            handler.postDelayed({ sendOtaStart(session, 0) }, OTA_START_RETRY_DELAY_MS)
-        }
-    }
-
-    fun abortOtaUpdate() {
-        val session =
-            synchronized(otaLock) {
-                val current = otaSession
-                otaSession = null
-                current
-            }
-        connectionManager?.writeOtaControl("CMD=ABORT")
-        val fileName = session?.fileName
-        resumeKeepAliveAfterOta()
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "error",
-                message = getString(R.string.ota_status_aborted),
-                fileName = fileName
-            )
-        )
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "idle",
-                message = getString(R.string.ota_status_idle),
-                fileName = fileName
-            )
-        )
-    }
-
-    fun emitCurrentOtaStatus() {
-        val cached =
-            lastOtaStatus.get()
-                ?: OtaStatus(
-                    state = "idle",
-                    message = getString(R.string.ota_status_idle)
-                )
-        broadcastOtaStatus(cached)
-    }
-
-    private fun prepareOtaSession(uri: Uri, fileName: String): OtaSession? {
-        return try {
-            val bytes = readFirmwareBytes(uri)
-            if (bytes == null || bytes.isEmpty()) {
-                Log.w(TAG, "OTA firmware bytes are empty")
-                null
-            } else {
-                val shaHex = computeSha256Hex(bytes)
-                val crcHex = computeCrc32Hex(bytes)
-                OtaSession(uri, fileName, bytes, bytes.size, shaHex, crcHex)
-            }
-        } catch (error: Exception) {
-            Log.e(TAG, "Failed to prepare OTA session", error)
-            null
-        }
-    }
-
-    private fun readFirmwareBytes(uri: Uri): ByteArray? {
-        return try {
-            contentResolver.openInputStream(uri)?.use { stream -> stream.readBytes() }
-        } catch (error: Exception) {
-            Log.e(TAG, "Unable to read OTA firmware at $uri", error)
-            null
-        }
-    }
-
-    private fun computeSha256Hex(bytes: ByteArray): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(bytes)
-        return hash.joinToString("") { "%02X".format(it) }
-    }
-
-    private fun computeCrc32Hex(bytes: ByteArray): String {
-        val crc = CRC32()
-        crc.update(bytes)
-        val value = crc.value and 0xFFFFFFFFL
-        return "%08X".format(value)
-    }
-
-    private fun computeChunkCrc32(bytes: ByteArray, offset: Int, length: Int): Int {
-        val crc = CRC32()
-        crc.update(bytes, offset, length)
-        return (crc.value and 0xFFFFFFFFL).toInt()
-    }
-
-    private fun resolveChunkPayloadSize(): Int {
-        val mtu = connectionManager?.getCurrentMtu() ?: 23
-        val attPayloadMax = (mtu - 3).coerceAtLeast(20)
-        val headerSize = 4 + 2 + 4
-        val safety = 12 // extra headroom to avoid enqueue failures near MTU boundary
-        val maxPayload = (attPayloadMax - headerSize - safety).coerceAtLeast(16)
-        return OTA_CHUNK_MAX_BYTES.coerceAtMost(maxPayload)
-    }
-
-    private fun pauseKeepAliveForOta(manager: ConnectionManager) {
-        manager.setKeepAliveBlocked(true)
-        val wasRunning = manager.isKeepAliveRunning()
-        if (wasRunning) {
-            manager.stopKeepAliveLoop()
-        }
-        keepAlivePausedForOta = wasRunning
-    }
-
-    private fun resumeKeepAliveAfterOta() {
-        if (!isConnected) {
-            keepAlivePausedForOta = false
-            return
-        }
-        val manager = connectionManager ?: return
-        manager.setKeepAliveBlocked(false)
-        if (keepAlivePausedForOta && otaSession == null && !otaStarting) {
-            manager.startKeepAlive()
-        }
-        keepAlivePausedForOta = false
-    }
-
-    private fun runGattOnMain(action: () -> Boolean): Boolean {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            return action()
-        }
-        val latch = CountDownLatch(1)
-        var result = false
-        handler.post {
-            result = action()
-            latch.countDown()
-        }
-        val completed = latch.await(2, java.util.concurrent.TimeUnit.SECONDS)
-        if (!completed) {
-            Log.w(TAG, "runGattOnMain timed out waiting for BLE operation")
+            updateOtaPortalState(message = getString(R.string.ota_error_not_connected))
             return false
         }
-        return result
+        val manager = connectionManager ?: return false
+        otaGuardPending = true
+        val payload = if (enable) "1" else "0"
+        val enqueued = manager.writeCharacteristic(BleUuids.CHAR_OTA_CONTROL_UUID, payload)
+        if (!enqueued) {
+            otaGuardPending = false
+            updateOtaPortalState(message = getString(R.string.ota_guard_write_failed))
+            return false
+        }
+        val pendingMessage =
+            if (enable) getString(R.string.ota_status_request_open) else getString(R.string.ota_status_request_close)
+        updateOtaPortalState(message = pendingMessage)
+        handler.postDelayed({ refreshOtaPortalState() }, 500)
+        return true
     }
 
-    private fun broadcastOtaStatus(status: OtaStatus) {
-        lastOtaStatus.set(status)
+    fun refreshOtaPortalState() {
+        val manager = connectionManager ?: return
+        if (!isConnected) return
+        manager.readCharacteristic(BleUuids.CHAR_OTA_CONTROL_UUID)
+        handler.postDelayed(
+            { manager.readCharacteristic(BleUuids.CHAR_WIFI_STATUS_UUID) },
+            250
+        )
+    }
+
+    fun emitCurrentOtaPortalState() {
+        broadcastOtaPortalState()
+    }
+
+    private fun updateOtaPortalState(
+        enabled: Boolean? = null,
+        wifiStatus: String? = null,
+        ip: String? = null,
+        message: String? = null
+    ) {
+        val updated =
+            otaPortalState.copy(
+                enabled = enabled ?: otaPortalState.enabled,
+                wifiStatus = wifiStatus ?: otaPortalState.wifiStatus,
+                ip = ip ?: otaPortalState.ip,
+                message = message ?: otaPortalState.message
+            )
+        otaPortalState = updated
+        broadcastOtaPortalState(message ?: updated.message)
+    }
+
+    private fun broadcastOtaPortalState(message: String? = otaPortalState.message) {
+        val current = otaPortalState.copy(message = message ?: otaPortalState.message)
         val intent =
             Intent(ACTION_OTA_STATUS).apply {
-                putExtra(EXTRA_OTA_STATE, status.state)
-                putExtra(EXTRA_OTA_TOTAL, status.total)
-                putExtra(EXTRA_OTA_RECEIVED, status.received)
-                status.message?.let { putExtra(EXTRA_OTA_MESSAGE, it) }
-                status.next?.let { putExtra(EXTRA_OTA_NEXT, it) }
-                status.offset?.let { putExtra(EXTRA_OTA_OFFSET, it) }
-                status.fileName?.let { putExtra(EXTRA_OTA_FILE_NAME, it) }
+                putExtra(EXTRA_OTA_STATE, if (current.enabled) "enabled" else "disabled")
+                putExtra(EXTRA_OTA_GUARD_ENABLED, current.enabled)
+                putExtra(EXTRA_OTA_WIFI_STATE, current.wifiStatus)
+                current.ip?.let { putExtra(EXTRA_OTA_WIFI_IP, it) }
+                current.portalUrl?.let { putExtra(EXTRA_OTA_PORTAL_URL, it) }
+                putExtra(
+                    EXTRA_OTA_PORTAL_FALLBACK,
+                    "http://$OTA_AP_FALLBACK_HOST$OTA_PORTAL_PATH"
+                )
+                message?.takeIf { it.isNotBlank() }?.let { putExtra(EXTRA_OTA_MESSAGE, it) }
             }
         sendBroadcast(intent)
     }
 
-    private fun currentOtaFileName(): String? =
-        synchronized(otaLock) { otaSession?.fileName }
-
-    private fun sendOtaStart(session: OtaSession, attempt: Int) {
-        val command =
-            "CMD=START;SIZE=${session.totalSize};SHA256=${session.sha256Hex};CRC32=${session.crc32Hex}"
-        val enqueued = runGattOnMain { connectionManager?.writeOtaControl(command) ?: false }
-        if (!enqueued) {
-            if (attempt < OTA_START_RETRY_MAX) {
-                Log.w(TAG, "START enqueue failed, retry ${attempt + 1}/$OTA_START_RETRY_MAX")
-                handler.postDelayed({ sendOtaStart(session, attempt + 1) }, OTA_START_RETRY_DELAY_MS)
-                return
-            }
-            otaStarting = false
-            waitingForOtaStartAck = false
-            handleOtaFailure(getString(R.string.ota_error_start))
-            return
-        }
-        synchronized(otaLock) {
-            session.awaitingAck = false
-            session.finished = false
-            session.nextOffset = 0
-        }
-        otaStarting = false
-        waitingForOtaStartAck = true
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "receiving",
-                message = getString(R.string.ota_status_preparing, session.fileName),
-                total = session.totalSize,
-                received = 0,
-                fileName = session.fileName
-            )
-        )
-    }
-
-    private fun handleOtaReceiving(total: Int?, received: Int?) {
-        val session = synchronized(otaLock) { otaSession }
-        val effectiveTotal = total ?: session?.totalSize ?: 0
-        val receivedBytes = received ?: session?.nextOffset ?: 0
-        if (session != null) {
-            synchronized(otaLock) {
-                session.nextOffset = receivedBytes
-                session.awaitingAck = false
-                session.retryOffset = receivedBytes
-                session.retryCount = 0
-            }
-            waitingForOtaStartAck = false
-            handler.postDelayed({ sendNextChunkIfPossible() }, 50)
-        }
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "receiving",
-                total = effectiveTotal,
-                received = receivedBytes,
-                fileName = session?.fileName
-            )
-        )
-    }
-
-    private fun handleOtaChunkAck(nextOffset: Int, total: Int?) {
-        val session = synchronized(otaLock) { otaSession }
-        val effectiveTotal = total ?: session?.totalSize ?: 0
-        if (session == null) {
-            broadcastOtaStatus(
-                OtaStatus(
-                    state = "chunk_ack",
-                    total = effectiveTotal,
-                    received = nextOffset,
-                    next = nextOffset,
-                    fileName = currentOtaFileName()
-                )
-            )
-            return
-        }
-        synchronized(otaLock) {
-            session.nextOffset = nextOffset
-            session.awaitingAck = false
-        }
-        waitingForOtaStartAck = false
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "chunk_ack",
-                total = effectiveTotal,
-                received = nextOffset,
-                next = nextOffset,
-                fileName = session.fileName
-            )
-        )
-        if (nextOffset >= session.totalSize) {
-            sendOtaFinish(session)
-        } else {
-            handler.postDelayed({ sendNextChunkIfPossible() }, 50)
-        }
-    }
-
-    private fun sendNextChunkIfPossible() {
-        if (waitingForOtaStartAck) {
-            Log.d(TAG, "Waiting for OTA start ack before sending chunks")
-            return
-        }
-        val snapshot =
-            synchronized(otaLock) {
-                val session = otaSession ?: return
-                if (session.awaitingAck) return
-                if (session.nextOffset >= session.totalSize) return
-                val remaining = session.totalSize - session.nextOffset
-                val length = remaining.coerceAtMost(resolveChunkPayloadSize())
-                if (length <= 0) {
-                    Log.w(TAG, "Chunk length resolved to $length, aborting OTA")
-                    handleOtaFailure(getString(R.string.ota_error_chunk_enqueue), session.nextOffset)
-                    return
-                }
-                session.awaitingAck = true
-                session.retryOffset = session.nextOffset
-                session.retryCount = 0
-                Triple(session, session.nextOffset, length)
-            } ?: return
-
-        val (session, offset, length) = snapshot
-        handler.postDelayed(
-            {
-                val crc = computeChunkCrc32(session.imageBytes, offset, length)
-                val buffer =
-                    ByteBuffer.allocate(4 + 2 + length + 4)
-                        .order(ByteOrder.LITTLE_ENDIAN)
-                        .apply {
-                            putInt(offset)
-                            putShort(length.toShort())
-                            put(session.imageBytes, offset, length)
-                            putInt(crc)
-                        }
-                val payload = buffer.array()
-                Log.d(
-                    TAG,
-                    "Sending OTA chunk offset=$offset len=$length crc=${"%08X".format(crc)} mtu=${connectionManager?.getCurrentMtu()}"
-                )
-                var attempt = 0
-                var enqueued = false
-                while (attempt < 3 && !enqueued) {
-                    enqueued = runGattOnMain { connectionManager?.writeOtaData(payload) ?: false }
-                    if (!enqueued) {
-                        attempt += 1
-                        if (attempt < 3) {
-                            Log.w(TAG, "OTA chunk enqueue failed, retry $attempt/3 offset=$offset")
-                            Thread.sleep(30)
-                        }
-                    }
-                }
-                if (!enqueued) {
-                    val shouldRetry =
-                        synchronized(otaLock) {
-                            if (session.retryOffset != offset) {
-                                session.retryOffset = offset
-                                session.retryCount = 1
-                            } else {
-                                session.retryCount += 1
-                            }
-                            session.awaitingAck = false
-                            session.retryCount <= 5
-                        }
-                    if (shouldRetry) {
-                        Log.e(TAG, "OTA chunk enqueue failed, scheduling retry offset=$offset count=${session.retryCount}")
-                        handler.postDelayed({ sendNextChunkIfPossible() }, 150)
-                    } else {
-                        handleOtaFailure(getString(R.string.ota_error_chunk_enqueue), offset)
-                    }
-                    return@postDelayed
-                }
-                broadcastOtaStatus(
-                    OtaStatus(
-                        state = "sending",
-                        message = getString(R.string.ota_status_sending, session.fileName),
-                        total = session.totalSize,
-                        received = offset,
-                        next = offset + length,
-                        fileName = session.fileName
-                    )
-                )
-            },
-            50
-        )
-    }
-
-    private fun sendOtaFinish(session: OtaSession) {
-        val shouldSend =
-            synchronized(otaLock) {
-                if (otaSession != session || session.finished) {
-                    false
-                } else {
-                    session.finished = true
-                    true
-                }
-            }
-        if (!shouldSend) {
-            return
-        }
-        val enqueued = runGattOnMain { connectionManager?.writeOtaControl("CMD=FINISH") ?: false }
-        if (!enqueued) {
-            handleOtaFailure(getString(R.string.ota_error_finish))
-            return
-        }
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "validating",
-                message = getString(R.string.ota_status_validating),
-                total = session.totalSize,
-                received = session.totalSize,
-                fileName = session.fileName
-            )
-        )
-    }
-
-    private fun handleOtaReady(message: String?) {
-        val (fileName, total) =
-            synchronized(otaLock) {
-                val session = otaSession
-                otaSession = null
-                Pair(session?.fileName, session?.totalSize ?: 0)
-            }
-        resumeKeepAliveAfterOta()
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "ready",
-                message = message ?: getString(R.string.ota_status_ready),
-                total = total,
-                received = total,
-                fileName = fileName
-            )
-        )
-    }
-
-    private fun handleOtaFailure(message: String, offset: Int? = null) {
-        val fileName =
-            synchronized(otaLock) {
-                val session = otaSession
-                otaSession = null
-                session?.fileName
-            }
-        resumeKeepAliveAfterOta()
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "error",
-                message = message,
-                offset = offset,
-                fileName = fileName
-            )
-        )
-    }
-
-    private fun resetOtaSession() {
-        synchronized(otaLock) {
-            otaSession = null
-        }
-        resumeKeepAliveAfterOta()
-        broadcastOtaStatus(
-            OtaStatus(
-                state = "idle",
-                message = getString(R.string.ota_status_idle)
-            )
-        )
+    private fun resetOtaPortalState(reasonMessage: String? = null) {
+        otaGuardPending = false
+        otaPortalState = OtaPortalState(message = reasonMessage)
+        broadcastOtaPortalState(reasonMessage)
     }
 
     private fun hasMockLocationPermission(): Boolean {
@@ -1228,6 +977,7 @@ class GNSSClientService :
         broadcastConnectionState(true)
         broadcastDeviceSettings()
         requestDeviceSettingsRead()
+        refreshOtaPortalState()
         updateNotification()
     }
 
@@ -1239,16 +989,22 @@ class GNSSClientService :
                 it.release()
             }
         }
-        if (otaSession != null) {
-            handleOtaFailure(getString(R.string.ota_error_disconnected))
-        }
-        keepAlivePausedForOta = false
+        resetOtaPortalState(getString(R.string.ota_status_closed))
         stopReceivingLocationUpdates()
         broadcastConnectionState(false)
+        handler.removeCallbacks(idleMovementRunnable)
+        hasReceivedModuleFix = false
+        lastRealUpdateTimestamp = 0L
+        lastRealLocation = null
         apControlEnabled = null
         bridgeModeEnabled = null
         gpsBaudRate = null
         gnssProfile = null
+        baseSettingsProfile = null
+        customGnssProfileFrame = null
+        customBaseSettingsFrame = null
+        deviceVersion = null
+        inputVoltage = null
         broadcastDeviceSettings()
         updateNotification()
         if (AppPrefs.isMockEnabled(this)) {
@@ -1258,12 +1014,9 @@ class GNSSClientService :
 
     override fun onServicesDiscovered(device: BluetoothDevice) {
         Log.d(TAG, "Services discovered on ${device.address}")
-        if (otaSession == null && !otaStarting) {
-            connectionManager?.startKeepAlive()
-        } else {
-            Log.d(TAG, "Keepalive not started: OTA in progress")
-        }
+        connectionManager?.startKeepAlive()
         requestDeviceSettingsRead()
+        refreshOtaPortalState()
     }
 
     override fun onError(message: String) {
@@ -1282,7 +1035,14 @@ class GNSSClientService :
             TAG,
             "BLE coordinates lat=$latitude lon=$longitude deltaMillis=${deltaMillis ?: "n/a"}"
         )
-        handleLocationUpdate(latitude, longitude)
+        handler.removeCallbacks(idleMovementRunnable)
+        val location = handleLocationUpdate(latitude, longitude, synthetic = false)
+        if (location != null) {
+            hasReceivedModuleFix = true
+            lastRealUpdateTimestamp = currentMillis
+            lastRealLocation = Location(location)
+        }
+        scheduleIdleMovement()
     }
 
     override fun onFixStatusReceived(status: String) {
@@ -1363,48 +1123,65 @@ class GNSSClientService :
         }
     }
 
+    override fun onBaseSettingsProfileChanged(profile: Int) {
+        val previous = baseSettingsProfile
+        val supported = BASE_SETTINGS_PROFILE_VALUES.contains(profile)
+        baseSettingsProfile = profile
+        if (previous != baseSettingsProfile) {
+            if (!supported) {
+                Log.w(TAG, "Base settings profile $profile not in supported set")
+            } else {
+                Log.i(TAG, "Base settings profile updated to $profile")
+            }
+            broadcastDeviceSettings()
+        } else if (previous == null) {
+            broadcastDeviceSettings()
+        }
+    }
+
+    override fun onCustomGnssProfileFrameChanged(frame: String) {
+        customGnssProfileFrame = frame
+        broadcastDeviceSettings()
+    }
+
+    override fun onCustomBaseSettingsFrameChanged(frame: String) {
+        customBaseSettingsFrame = frame
+        broadcastDeviceSettings()
+    }
+
     override fun onOtaStatusReceived(status: String) {
-        Log.d(TAG, "OTA status: $status")
-        val payload = runCatching { JSONObject(status) }.getOrNull()
-        if (payload == null) {
-            Log.w(TAG, "Invalid OTA status JSON: $status")
-            return
+        Log.d(TAG, "OTA status (legacy): $status")
+    }
+
+    override fun onOtaGuardStateChanged(enabled: Boolean) {
+        otaGuardPending = false
+        val message =
+            if (enabled) getString(R.string.ota_status_open) else getString(R.string.ota_status_closed)
+        updateOtaPortalState(enabled = enabled, message = message)
+        if (enabled) {
+            handler.postDelayed({ refreshOtaPortalState() }, 300)
         }
-        val state = payload.optString("state")
-        val message = payload.optString("message").takeIf { it.isNotBlank() }
-        val total = if (payload.has("total")) payload.optInt("total") else null
-        val received = if (payload.has("received")) payload.optInt("received") else null
-        val next = if (payload.has("next")) payload.optInt("next") else null
-        val offset = if (payload.has("offset")) payload.optInt("offset") else null
-        when (state) {
-            "receiving" -> handleOtaReceiving(total, received)
-            "chunk_ack" -> next?.let { handleOtaChunkAck(it, total) }
-            "validating" -> broadcastOtaStatus(
-                OtaStatus(
-                    state = "validating",
-                    message = message ?: getString(R.string.ota_status_validating),
-                    total = total ?: 0,
-                    received = received ?: 0,
-                    next = next,
-                    offset = offset,
-                    fileName = currentOtaFileName()
-                )
-            )
-            "ready" -> handleOtaReady(message ?: getString(R.string.ota_status_ready))
-            "error" -> handleOtaFailure(message ?: getString(R.string.ota_status_error_generic), offset)
-            "idle" -> resetOtaSession()
-            else -> broadcastOtaStatus(
-                OtaStatus(
-                    state = state.ifBlank { "unknown" },
-                    message = message,
-                    total = total ?: 0,
-                    received = received ?: 0,
-                    next = next,
-                    offset = offset,
-                    fileName = currentOtaFileName()
-                )
-            )
-        }
+    }
+
+    override fun onWifiStatusReceived(status: String, ip: String?) {
+        val normalized =
+            when (status.lowercase()) {
+                "connected" -> "connected"
+                "connecting" -> "connecting"
+                "disconnected" -> "disconnected"
+                else -> "unknown"
+            }
+        updateOtaPortalState(wifiStatus = normalized, ip = ip)
+    }
+
+    override fun onInputVoltageReceived(voltage: Double) {
+        inputVoltage = voltage
+        broadcastDeviceSettings()
+    }
+
+    override fun onDeviceVersionReceived(version: String) {
+        deviceVersion = version
+        broadcastDeviceSettings()
     }
 
     override fun onTtffReceived(ttffSeconds: Long) {
@@ -1440,14 +1217,24 @@ class GNSSClientService :
         const val EXTRA_GPS_BAUD_KNOWN = "gps_baud_known"
         const val EXTRA_GNSS_PROFILE = "gnss_profile"
         const val EXTRA_GNSS_PROFILE_KNOWN = "gnss_profile_known"
+        const val EXTRA_BASE_SETTINGS_PROFILE = "base_settings_profile"
+        const val EXTRA_BASE_SETTINGS_PROFILE_KNOWN = "base_settings_profile_known"
+        const val EXTRA_CUSTOM_GNSS_PROFILE_FRAME = "custom_gnss_profile_frame"
+        const val EXTRA_CUSTOM_GNSS_PROFILE_KNOWN = "custom_gnss_profile_known"
+        const val EXTRA_CUSTOM_BASE_SETTINGS_FRAME = "custom_base_settings_frame"
+        const val EXTRA_CUSTOM_BASE_SETTINGS_KNOWN = "custom_base_settings_known"
+        const val EXTRA_DEVICE_VERSION = "device_version"
+        const val EXTRA_DEVICE_VERSION_KNOWN = "device_version_known"
+        const val EXTRA_INPUT_VOLTAGE = "input_voltage"
+        const val EXTRA_INPUT_VOLTAGE_KNOWN = "input_voltage_known"
         const val ACTION_OTA_STATUS = "com.g992.blegpsmocker.OTA_STATUS"
         const val EXTRA_OTA_STATE = "ota_state"
         const val EXTRA_OTA_MESSAGE = "ota_message"
-        const val EXTRA_OTA_TOTAL = "ota_total"
-        const val EXTRA_OTA_RECEIVED = "ota_received"
-        const val EXTRA_OTA_NEXT = "ota_next"
-        const val EXTRA_OTA_OFFSET = "ota_offset"
-        const val EXTRA_OTA_FILE_NAME = "ota_file_name"
+        const val EXTRA_OTA_GUARD_ENABLED = "ota_guard_enabled"
+        const val EXTRA_OTA_WIFI_STATE = "ota_wifi_state"
+        const val EXTRA_OTA_WIFI_IP = "ota_wifi_ip"
+        const val EXTRA_OTA_PORTAL_URL = "ota_portal_url"
+        const val EXTRA_OTA_PORTAL_FALLBACK = "ota_portal_fallback"
 
         private val providerCandidates = listOf(LocationManager.GPS_PROVIDER)
 
@@ -1475,18 +1262,4 @@ class GNSSClientService :
         val total: Int
             get() = strong + medium + weak
     }
-
-    private data class OtaSession(
-        val uri: Uri,
-        val fileName: String,
-        val imageBytes: ByteArray,
-        val totalSize: Int,
-        val sha256Hex: String,
-        val crc32Hex: String,
-        var nextOffset: Int = 0,
-        var awaitingAck: Boolean = false,
-        var finished: Boolean = false,
-        var retryOffset: Int = 0,
-        var retryCount: Int = 0
-    )
 }

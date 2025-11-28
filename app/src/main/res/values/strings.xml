@@ -9,7 +9,6 @@
     <string name="status_unknown">Статус: неизвестно</string>
     <string name="connection_unknown">Статус соединения: неизвестно</string>
     <string name="status_section_title">Текущее состояние</string>
-    <string name="status_badge_label_app">BLE GPS</string>
     <string name="status_badge_label_connection">Соединение</string>
     <string name="status_badge_label_data_age">Данные</string>
 
@@ -39,14 +38,6 @@
 
     <string name="satellites_status">Спутников: %1$d</string>
     <string name="satellites_unknown">Спутников: 0</string>
-    <string name="provider_status">Провайдер: %1$s</string>
-    <string name="provider_unknown">Провайдер: неизвестно</string>
-    <string name="age_status">Возраст фикса: %1$s</string>
-    <string name="age_format">%.1f с</string>
-    <string name="age_unknown">Возраст фикса: неизвестно</string>
-
-    <string name="movement_last_update">Последнее обновление: %1$s</string>
-    <string name="movement_last_update_unknown">Последнее обновление: —</string>
     <string name="movement_speed">Скорость: %1$s</string>
     <string name="speed_format">%.2f м/с</string>
     <string name="movement_bearing">Курс: %1$s</string>
@@ -54,8 +45,6 @@
     <string name="additional_info_unknown">Скорость: неизвестно  Курс: неизвестно</string>
     <string name="location_section_title">Позиция и спутники</string>
     <string name="location_badge_label_satellites">Спутники</string>
-    <string name="location_badge_label_provider">Провайдер</string>
-    <string name="location_badge_label_age">Возраст фикса</string>
 
     <!-- Device settings -->
     <string name="settings_section_title">Настройки устройства</string>
@@ -73,32 +62,43 @@
     <string name="settings_gnss_profile_label">GNSS профиль (UBX)</string>
     <string name="settings_gnss_profile_unknown">—</string>
     <string name="settings_gnss_profile_dialog_title">Переключение GNSS профиля</string>
-    <string name="settings_gnss_profile_dialog_message">Будет применён скрипт UBX: NMEA выключится, модуль вернётся к настройкам по умолчанию и переключится на выбранный профиль, затем включатся проверки и NMEA. Продолжить?</string>
+    <string name="settings_gnss_profile_dialog_message">Устройство переключится на выбранный GNSS профиль. Продолжить?</string>
+    <string name="settings_base_profile_label">Профиль настроек (UBX)</string>
+    <string name="settings_base_profile_unknown">—</string>
+    <string name="settings_base_profile_dialog_title">Переключение профиля настроек</string>
+    <string name="settings_base_profile_dialog_message">Устройство применит выбранный профиль базовых настроек. Продолжить?</string>
+    <string name="settings_custom_gnss_frame_label">Кадр UBX профиля GNSS</string>
+    <string name="settings_custom_base_frame_label">Кадр UBX базовых настроек</string>
+    <string name="settings_custom_frame_placeholder">—</string>
+    <string name="settings_custom_frame_hint">AA BB CC …</string>
+    <string name="settings_custom_frame_apply">Сохранить UBX</string>
+    <string name="settings_custom_frame_empty_error">Введите полный кадр UBX</string>
+    <string name="settings_custom_frame_write_failed">Не удалось сохранить кадр</string>
+    <string name="settings_custom_frame_saved">Кадр сохранён</string>
+    <string name="settings_input_voltage_label">Питание: %1$.2f В</string>
+    <string name="settings_input_voltage_unknown">Питание: —</string>
+    <string name="settings_device_version_label">Версия устройства: %1$s</string>
+    <string name="settings_device_version_unknown">Версия устройства: —</string>
     <string name="dialog_ok">ОК</string>
     <string name="dialog_cancel">Отмена</string>
     <string name="settings_write_failed">Не удалось изменить настройку. Попробуйте ещё раз.</string>
     <string name="settings_not_connected">Устройство не подключено</string>
 
     <!-- OTA -->
-    <string name="ota_section_title">OTA обновление</string>
-    <string name="ota_pick_file">Выбрать файл прошивки (.bin)</string>
-    <string name="ota_abort">Отменить обновление</string>
-    <string name="ota_status_idle">Готово к OTA</string>
-    <string name="ota_status_preparing">Подготовка %1$s…</string>
-    <string name="ota_status_sending">Передача %1$s</string>
-    <string name="ota_status_validating">Проверка прошивки…</string>
-    <string name="ota_status_ready">Прошивка записана, устройство перезагружается</string>
+    <string name="ota_toggle_label">OTA обновление</string>
+    <string name="ota_status_open">Окно OTA открыто. Страница доступна по /update</string>
+    <string name="ota_status_closed">Окно OTA закрыто</string>
+    <string name="ota_status_request_open">Запрашиваем доступ к OTA…</string>
+    <string name="ota_status_request_close">Закрываем окно OTA…</string>
     <string name="ota_status_error_generic">Ошибка OTA</string>
-    <string name="ota_status_aborted">OTA отменена</string>
     <string name="ota_error_not_connected">Нет подключения к устройству</string>
-    <string name="ota_error_service_missing">OTA сервис недоступен на устройстве</string>
-    <string name="ota_error_file_read">Не удалось прочитать файл прошивки</string>
-    <string name="ota_error_start">Не удалось отправить команду START</string>
-    <string name="ota_error_chunk_enqueue">Не удалось отправить блок прошивки</string>
-    <string name="ota_error_finish">Не удалось отправить команду FINISH</string>
-    <string name="ota_error_disconnected">Соединение прервано во время OTA</string>
-    <string name="ota_progress_placeholder">Прогресс: —</string>
-    <string name="ota_progress_format">Прогресс: %1$.1f%% • %2$d / %3$d байт</string>
+    <string name="ota_guard_write_failed">Не удалось запросить доступ к OTA</string>
+    <string name="ota_wifi_connected">Wi‑Fi: подключено</string>
+    <string name="ota_wifi_connected_ip">Wi‑Fi: %1$s</string>
+    <string name="ota_wifi_connecting">Wi‑Fi: подключение…</string>
+    <string name="ota_wifi_disconnected">Wi‑Fi: не подключено</string>
+    <string name="ota_wifi_unknown">Wi‑Fi: неизвестно</string>
+    <string name="ota_link_unavailable">Ссылка на OTA недоступна</string>
 
     <!-- Permissions -->
     <string name="permissions_section_title">Разрешения</string>
@@ -132,4 +132,11 @@
     <string name="notification_text_connected">Данные обновлены %.1f с назад</string>
     <string name="notification_text_connected_no_age">Данные получены</string>
     <string name="notification_text_disconnected">Нет подключения к устройству</string>
+
+    <!-- App settings -->
+    <string name="app_settings_title">Настройки приложения</string>
+    <string name="always_moving_toggle_label">Всегда в движении</string>
+    <string name="always_moving_description">После получения координат модуль будет подмешивать небольшие сдвиги при простое более 3 секунд, чтобы навигаторы видели минимальное движение.</string>
+    <string name="always_moving_dialog_title">Включить «Всегда в движении»</string>
+    <string name="always_moving_dialog_message">Во время остановки будут имитироваться случайные перемещения вокруг текущей точки с минимальной скоростью 0.1 м/с, чтобы скрывать рекламу в навигаторах. Продолжить?</string>
 </resources>

@@ -27,10 +27,21 @@
         <item>Все системы (по умолчанию)</item>
         <item>ГЛОНАСС + BeiDou + Galileo</item>
         <item>Только ГЛОНАСС</item>
+        <item>Пользовательский</item>
     </string-array>
     <integer-array name="gnss_profile_values">
         <item>0</item>
         <item>1</item>
         <item>2</item>
+        <item>3</item>
+    </integer-array>
+
+    <string-array name="base_settings_profile_labels">
+        <item>Профиль по умолчанию</item>
+        <item>Пользовательский</item>
+    </string-array>
+    <integer-array name="base_settings_profile_values">
+        <item>0</item>
+        <item>1</item>
     </integer-array>
 </resources>

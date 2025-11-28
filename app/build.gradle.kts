@@ -44,6 +44,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.swiperefreshlayout)
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     testImplementation(libs.junit)

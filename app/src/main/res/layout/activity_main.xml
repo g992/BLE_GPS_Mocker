@@ -1,508 +1,539 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.swiperefreshlayout.widget.SwipeRefreshLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/swipeRefreshLayout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/md_background"
-    android:focusable="true"
-    android:focusableInTouchMode="true"
-    android:descendantFocusability="beforeDescendants"
-    android:fillViewport="true"
-    android:paddingTop="16dp"
-    android:paddingBottom="16dp">
+    android:layout_height="match_parent">
 
-    <LinearLayout
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/mainContentScroll"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:gravity="center_horizontal">
+        android:layout_height="match_parent"
+        android:background="@color/md_background"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:descendantFocusability="beforeDescendants"
+        android:fillViewport="true"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp">
 
-        <com.google.android.material.card.MaterialCardView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:padding="20dp"
-            app:cardBackgroundColor="@color/md_surface_high"
-            app:cardCornerRadius="20dp"
-            app:cardUseCompatPadding="true">
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:gravity="center_horizontal">
 
-            <LinearLayout
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_margin="10dp"
-                android:orientation="vertical">
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/serviceStatusText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginTop="4dp"
-                    android:layout_marginEnd="8dp"
-                    android:text="@string/service_stopped"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="40sp"
-                    android:textStyle="bold" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/serviceToggleButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:text="@string/button_start_service" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:padding="20dp"
-            app:cardBackgroundColor="@color/md_surface_high"
-            app:cardCornerRadius="20dp"
-            app:cardUseCompatPadding="true">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_margin="10dp"
-                android:orientation="vertical">
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:text="@string/status_section_title"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="32sp"
-                    android:textStyle="bold" />
+                android:layout_marginBottom="16dp"
+                android:padding="20dp"
+                app:cardBackgroundColor="@color/md_surface_high"
+                app:cardCornerRadius="20dp"
+                app:cardUseCompatPadding="true">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_margin="10dp"
                     android:orientation="vertical">
 
-                    <LinearLayout
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/serviceStatusText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingStart="8dp"
-                        android:paddingTop="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingBottom="8dp">
+                        android:layout_marginStart="8dp"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="@string/service_stopped"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="40sp"
+                        android:textStyle="bold" />
 
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/status_badge_label_app"
-                            android:textColor="@color/md_on_surface"
-                            android:textSize="28sp" />
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:id="@+id/statusBadge"
-                            style="@style/Widget.BLEGPSMocker.Badge"
-                            android:text="@string/unknown" />
-                    </LinearLayout>
-
-                    <LinearLayout
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/serviceToggleButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingStart="8dp"
-                        android:paddingTop="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingBottom="8dp">
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/status_badge_label_connection"
-                            android:textColor="@color/md_on_surface"
-                            android:textSize="28sp" />
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:id="@+id/connectionBadge"
-                            style="@style/Widget.BLEGPSMocker.Badge"
-                            android:text="@string/unknown" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingStart="8dp"
-                        android:paddingTop="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingBottom="8dp">
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/status_badge_label_data_age"
-                            android:textColor="@color/md_on_surface"
-                            android:textSize="28sp" />
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:id="@+id/dataAgeBadge"
-                            style="@style/Widget.BLEGPSMocker.Badge"
-                            android:text="@string/unknown" />
-                    </LinearLayout>
+                        android:layout_marginTop="16dp"
+                        android:text="@string/button_start_service" />
                 </LinearLayout>
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+            </com.google.android.material.card.MaterialCardView>
 
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:padding="20dp"
-            app:cardBackgroundColor="@color/md_surface_high"
-            app:cardCornerRadius="20dp"
-            app:cardUseCompatPadding="true">
-
-            <LinearLayout
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_margin="10dp"
-                android:orientation="vertical">
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:text="@string/location_section_title"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="32sp"
-                    android:textStyle="bold" />
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/locationText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:text="@string/location_unknown"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="28sp" />
+                android:layout_marginBottom="16dp"
+                android:padding="20dp"
+                app:cardBackgroundColor="@color/md_surface_high"
+                app:cardCornerRadius="20dp"
+                app:cardUseCompatPadding="true">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_margin="10dp"
                     android:orientation="vertical">
 
-                    <LinearLayout
+                    <com.google.android.material.textview.MaterialTextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingStart="8dp"
-                        android:paddingTop="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingBottom="8dp">
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/location_badge_label_satellites"
-                            android:textColor="@color/md_on_surface"
-                            android:textSize="28sp" />
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:id="@+id/satellitesBadge"
-                            style="@style/Widget.BLEGPSMocker.Badge"
-                            android:text="@string/unknown" />
-                    </LinearLayout>
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="@string/status_section_title"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="32sp"
+                        android:textStyle="bold" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingStart="8dp"
-                        android:paddingTop="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingBottom="8dp">
+                        android:layout_marginTop="12dp"
+                        android:orientation="vertical">
 
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="0dp"
+                        <LinearLayout
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/location_badge_label_provider"
-                            android:textColor="@color/md_on_surface"
-                            android:textSize="28sp" />
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingStart="8dp"
+                            android:paddingTop="8dp"
+                            android:paddingEnd="8dp"
+                            android:paddingBottom="8dp">
 
-                        <com.google.android.material.textview.MaterialTextView
-                            android:id="@+id/providerBadge"
-                            style="@style/Widget.BLEGPSMocker.Badge"
-                            android:text="@string/unknown" />
-                    </LinearLayout>
+                            <com.google.android.material.textview.MaterialTextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/status_badge_label_connection"
+                                android:textColor="@color/md_on_surface"
+                                android:textSize="28sp" />
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingStart="8dp"
-                        android:paddingTop="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingBottom="8dp">
+                            <com.google.android.material.textview.MaterialTextView
+                                android:id="@+id/connectionBadge"
+                                style="@style/Widget.BLEGPSMocker.Badge"
+                                android:text="@string/unknown" />
+                        </LinearLayout>
 
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="0dp"
+                        <LinearLayout
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/location_badge_label_age"
-                            android:textColor="@color/md_on_surface"
-                            android:textSize="28sp" />
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingStart="8dp"
+                            android:paddingTop="8dp"
+                            android:paddingEnd="8dp"
+                            android:paddingBottom="8dp">
 
-                        <com.google.android.material.textview.MaterialTextView
-                            android:id="@+id/ageBadge"
-                            style="@style/Widget.BLEGPSMocker.Badge"
-                            android:text="@string/unknown" />
+                            <com.google.android.material.textview.MaterialTextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/status_badge_label_data_age"
+                                android:textColor="@color/md_on_surface"
+                                android:textSize="28sp" />
+
+                            <com.google.android.material.textview.MaterialTextView
+                                android:id="@+id/dataAgeBadge"
+                                style="@style/Widget.BLEGPSMocker.Badge"
+                                android:text="@string/unknown" />
+                        </LinearLayout>
                     </LinearLayout>
                 </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/additionalInfoText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/additional_info_unknown"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="28sp" />
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lastUpdateText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/movement_last_update_unknown"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="28sp" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:padding="20dp"
-            app:cardBackgroundColor="@color/md_surface_high"
-            app:cardCornerRadius="20dp"
-            app:cardUseCompatPadding="true">
-
-            <LinearLayout
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_margin="10dp"
-                android:orientation="vertical">
+                android:layout_marginBottom="16dp"
+                android:padding="20dp"
+                app:cardBackgroundColor="@color/md_surface_high"
+                app:cardCornerRadius="20dp"
+                app:cardUseCompatPadding="true">
 
-                <com.google.android.material.textview.MaterialTextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:text="@string/settings_section_title"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="32sp"
-                    android:textStyle="bold" />
+                    android:layout_margin="10dp"
+                    android:orientation="vertical">
 
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/apHotspotSwitch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:enabled="false"
-                    android:text="@string/settings_ap_toggle_label"
-                    android:textSize="28sp"
-                    android:showText="false" />
-
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/bridgeModeSwitch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:enabled="false"
-                    android:text="@string/settings_bridge_toggle_label"
-                    android:textSize="28sp"
-                    android:showText="false" />
-
-                <com.google.android.material.textfield.TextInputLayout
-                    android:id="@+id/gnssProfileLayout"
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:enabled="false"
-                    android:hint="@string/settings_gnss_profile_label"
-                    app:endIconMode="dropdown_menu"
-                    app:placeholderText="@string/settings_gnss_profile_unknown">
-
-                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                        android:id="@+id/gnssProfileDropdown"
+                    <com.google.android.material.textview.MaterialTextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:enabled="false"
-                        android:inputType="none"
-                        android:importantForAutofill="no"
-                        android:completionThreshold="0"
-                        android:dropDownHeight="wrap_content"
-                        android:dropDownWidth="match_parent" />
-                </com.google.android.material.textfield.TextInputLayout>
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="@string/location_section_title"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="32sp"
+                        android:textStyle="bold" />
 
-                <com.google.android.material.textfield.TextInputLayout
-                    android:id="@+id/gpsBaudRateLayout"
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:enabled="false"
-                    android:hint="@string/settings_gps_baud_label"
-                    app:endIconMode="dropdown_menu"
-                    app:placeholderText="@string/settings_gps_baud_unknown">
-
-                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                        android:id="@+id/gpsBaudRateDropdown"
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/locationText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginTop="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="@string/location_unknown"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="28sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:orientation="vertical">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingStart="8dp"
+                            android:paddingTop="8dp"
+                            android:paddingEnd="8dp"
+                            android:paddingBottom="8dp">
+
+                            <com.google.android.material.textview.MaterialTextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/location_badge_label_satellites"
+                                android:textColor="@color/md_on_surface"
+                                android:textSize="28sp" />
+
+                            <com.google.android.material.textview.MaterialTextView
+                                android:id="@+id/satellitesBadge"
+                                style="@style/Widget.BLEGPSMocker.Badge"
+                                android:text="@string/unknown" />
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/additionalInfoText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/additional_info_unknown"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="28sp" />
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:padding="20dp"
+                app:cardBackgroundColor="@color/md_surface_high"
+                app:cardCornerRadius="20dp"
+                app:cardUseCompatPadding="true">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="10dp"
+                    android:orientation="vertical">
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="@string/settings_section_title"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="32sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/apHotspotSwitch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
                         android:enabled="false"
-                        android:inputType="none"
-                        android:importantForAutofill="no"
-                        android:completionThreshold="0"
-                        android:dropDownHeight="wrap_content"
-                        android:dropDownWidth="match_parent" />
-                </com.google.android.material.textfield.TextInputLayout>
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+                        android:text="@string/settings_ap_toggle_label"
+                        android:textSize="28sp"
+                        android:showText="false" />
 
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:padding="20dp"
-            app:cardBackgroundColor="@color/md_surface_high"
-            app:cardCornerRadius="20dp"
-            app:cardUseCompatPadding="true">
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/bridgeModeSwitch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:enabled="false"
+                        android:text="@string/settings_bridge_toggle_label"
+                        android:textSize="28sp"
+                        android:showText="false" />
 
-            <LinearLayout
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/gnssProfileLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:enabled="false"
+                        android:hint="@string/settings_gnss_profile_label"
+                        app:endIconMode="dropdown_menu"
+                        app:placeholderText="@string/settings_gnss_profile_unknown">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/gnssProfileDropdown"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:enabled="false"
+                            android:inputType="none"
+                            android:importantForAutofill="no"
+                            android:completionThreshold="0"
+                            android:dropDownHeight="wrap_content"
+                            android:dropDownWidth="match_parent" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/customGnssFrameLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:visibility="gone"
+                        android:hint="@string/settings_custom_gnss_frame_label"
+                        app:placeholderText="@string/settings_custom_frame_hint">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/customGnssFrameInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:enabled="false"
+                            android:inputType="textVisiblePassword|textCapCharacters"
+                            android:importantForAutofill="no"
+                            android:maxLines="2"
+                            android:minLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/customGnssFrameApplyButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:visibility="gone"
+                        android:text="@string/settings_custom_frame_apply" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/baseSettingsProfileLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:enabled="false"
+                        android:hint="@string/settings_base_profile_label"
+                        app:endIconMode="dropdown_menu"
+                        app:placeholderText="@string/settings_base_profile_unknown">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/baseSettingsProfileDropdown"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:enabled="false"
+                            android:inputType="none"
+                            android:importantForAutofill="no"
+                            android:completionThreshold="0"
+                            android:dropDownHeight="wrap_content"
+                            android:dropDownWidth="match_parent" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/customBaseFrameLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:visibility="gone"
+                        android:hint="@string/settings_custom_base_frame_label"
+                        app:placeholderText="@string/settings_custom_frame_hint">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/customBaseFrameInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:enabled="false"
+                            android:inputType="textVisiblePassword|textCapCharacters"
+                            android:importantForAutofill="no"
+                            android:maxLines="2"
+                            android:minLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/customBaseFrameApplyButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:visibility="gone"
+                        android:text="@string/settings_custom_frame_apply" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/gpsBaudRateLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:enabled="false"
+                        android:hint="@string/settings_gps_baud_label"
+                        app:endIconMode="dropdown_menu"
+                        app:placeholderText="@string/settings_gps_baud_unknown">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/gpsBaudRateDropdown"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:enabled="false"
+                            android:inputType="none"
+                            android:importantForAutofill="no"
+                            android:completionThreshold="0"
+                            android:dropDownHeight="wrap_content"
+                            android:dropDownWidth="match_parent" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/wifiStatusText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="@string/ota_wifi_unknown"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="24sp" />
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/otaSwitch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/ota_toggle_label"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="20sp"
+                        android:checked="false" />
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/inputVoltageText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/settings_input_voltage_unknown"
+                        android:textColor="@color/chip_text_light"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/deviceVersionText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/settings_device_version_unknown"
+                        android:textColor="@color/chip_text_light"
+                        android:textSize="16sp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_margin="10dp"
-                android:orientation="vertical">
+                android:layout_marginBottom="16dp"
+                android:padding="20dp"
+                app:cardBackgroundColor="@color/md_surface_high"
+                app:cardCornerRadius="20dp"
+                app:cardUseCompatPadding="true">
 
-                <com.google.android.material.textview.MaterialTextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:text="@string/ota_section_title"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="32sp"
-                    android:textStyle="bold" />
+                    android:layout_margin="10dp"
+                    android:orientation="vertical">
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/otaStatusText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/ota_status_idle"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="28sp" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="@string/app_settings_title"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="32sp"
+                        android:textStyle="bold" />
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/otaProgressText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="@string/ota_progress_placeholder"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="24sp" />
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/alwaysMovingSwitch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/always_moving_toggle_label"
+                        android:textSize="28sp"
+                        android:showText="false" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/otaSelectButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/ota_pick_file" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/alwaysMovingDescription"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/always_moving_description"
+                        android:textColor="@color/chip_text_light"
+                        android:textSize="18sp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/otaAbortButton"
-                    style="@style/Widget.BLEGPSMocker.SecondaryButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/ota_abort"
-                    android:visibility="gone" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="20dp"
-            app:cardBackgroundColor="@color/md_surface_high"
-            app:cardCornerRadius="20dp"
-            app:cardUseCompatPadding="true">
-
-            <LinearLayout
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/permissionsCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_margin="10dp"
-                android:orientation="vertical">
+                android:padding="20dp"
+                app:cardBackgroundColor="@color/md_surface_high"
+                app:cardCornerRadius="20dp"
+                app:cardUseCompatPadding="true">
 
-                <com.google.android.material.textview.MaterialTextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:text="@string/permissions_section_title"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="32sp"
-                    android:textStyle="bold" />
+                    android:layout_margin="10dp"
+                    android:orientation="vertical">
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/permissionsStatusText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/missing_permissions_placeholder"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="28sp" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="@string/permissions_section_title"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="32sp"
+                        android:textStyle="bold" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/requestPermissionsButton"
-                    style="@style/Widget.BLEGPSMocker.SecondaryButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/button_request_permissions" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/permissionsStatusText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/missing_permissions_placeholder"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="28sp" />
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/mockLocationStatusText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/mock_location_status_placeholder"
-                    android:textColor="@color/md_on_surface"
-                    android:textSize="28sp"
-                    android:visibility="gone"
-                    tools:visibility="visible" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-    </LinearLayout>
-</androidx.core.widget.NestedScrollView>
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/requestPermissionsButton"
+                        style="@style/Widget.BLEGPSMocker.SecondaryButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/button_request_permissions" />
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/mockLocationStatusText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/mock_location_status_placeholder"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="28sp"
+                        android:visibility="gone"
+                        tools:visibility="visible" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</androidx.swiperefreshlayout.widget.SwipeRefreshLayout>

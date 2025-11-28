@@ -7,6 +7,7 @@ import android.os.Build
 object AppPrefs {
     private const val PREFS_NAME = "blegpsmocker_prefs"
     private const val KEY_MOCK_ENABLED = "mock_enabled"
+    private const val KEY_ALWAYS_MOVING = "always_moving"
 
     private fun prefs(context: Context): SharedPreferences {
         val appContext = context.applicationContext ?: context
@@ -25,5 +26,14 @@ object AppPrefs {
     @JvmStatic
     fun setMockEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_MOCK_ENABLED, enabled).apply()
+    }
+
+    @JvmStatic
+    fun isAlwaysMovingEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_ALWAYS_MOVING, false)
+
+    @JvmStatic
+    fun setAlwaysMovingEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_ALWAYS_MOVING, enabled).apply()
     }
 }

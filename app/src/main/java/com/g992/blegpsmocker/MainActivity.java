@@ -9,7 +9,7 @@ import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
-import android.database.Cursor;
+import android.graphics.Paint;
 import android.graphics.drawable.Drawable;
 import android.location.Location;
 import android.net.Uri;
@@ -19,7 +19,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.IBinder;
 import android.provider.Settings;
-import android.provider.OpenableColumns;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
@@ -37,24 +36,25 @@ import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.drawable.DrawableCompat;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.MaterialAutoCompleteTextView;
+import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 1001;
     private static final int MOCK_LOCATION_SETTINGS_REQUEST_CODE = 1002;
-    private static final int OTA_FILE_PICK_REQUEST_CODE = 2001;
+
+    private static final int GNSS_PROFILE_CUSTOM_VALUE = 3;
+    private static final int BASE_PROFILE_CUSTOM_VALUE = 1;
 
     private static final String[] REQUIRED_PERMISSIONS = {
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -69,15 +69,11 @@ public class MainActivity extends AppCompatActivity {
             Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
     };
 
-    private TextView statusBadge;
     private TextView connectionBadge;
     private TextView dataAgeBadge;
     private TextView locationText;
     private TextView satellitesBadge;
-    private TextView providerBadge;
-    private TextView ageBadge;
     private TextView additionalInfoText;
-    private TextView lastUpdateText;
     private MaterialButton requestPermissionsButton;
     private TextView permissionsStatusText;
     private TextView mockLocationStatusText;
@@ -87,12 +83,23 @@ public class MainActivity extends AppCompatActivity {
     private SwitchMaterial bridgeModeSwitch;
     private TextInputLayout gnssProfileLayout;
     private MaterialAutoCompleteTextView gnssProfileDropdown;
+    private TextInputLayout customGnssFrameLayout;
+    private TextInputEditText customGnssFrameInput;
+    private MaterialButton customGnssFrameApplyButton;
+    private TextInputLayout baseSettingsProfileLayout;
+    private MaterialAutoCompleteTextView baseSettingsProfileDropdown;
+    private TextInputLayout customBaseFrameLayout;
+    private TextInputEditText customBaseFrameInput;
+    private MaterialButton customBaseFrameApplyButton;
     private TextInputLayout gpsBaudRateLayout;
     private MaterialAutoCompleteTextView gpsBaudRateDropdown;
-    private MaterialButton otaSelectButton;
-    private MaterialButton otaAbortButton;
-    private TextView otaStatusText;
-    private TextView otaProgressText;
+    private TextView wifiStatusText;
+    private SwitchMaterial otaSwitch;
+    private View permissionsCard;
+    private SwipeRefreshLayout swipeRefreshLayout;
+    private TextView inputVoltageText;
+    private TextView deviceVersionText;
+    private SwitchMaterial alwaysMovingSwitch;
 
     @Nullable
     private Boolean apControlState = null;
@@ -102,16 +109,39 @@ public class MainActivity extends AppCompatActivity {
     private Integer gnssProfile = null;
     @Nullable
     private Integer gpsBaudRate = null;
+    @Nullable
+    private Integer baseSettingsProfile = null;
+    @Nullable
+    private String customGnssProfileFrame = null;
+    @Nullable
+    private String customBaseSettingsFrame = null;
     private String apSsidHint = null;
     private boolean suppressApSwitchChange = false;
     private boolean suppressBridgeSwitchChange = false;
     private boolean suppressGnssProfileChange = false;
+    private boolean suppressBaseProfileChange = false;
     private boolean suppressGpsBaudChange = false;
-    private boolean otaInProgress = false;
+    private boolean otaGuardEnabled = false;
+    private boolean suppressOtaSwitchChange = false;
+    private boolean suppressAlwaysMovingChange = false;
+    @Nullable
+    private String wifiIp = null;
+    @Nullable
+    private String wifiState = null;
+    @Nullable
+    private String deviceVersion = null;
+    @Nullable
+    private Double inputVoltage = null;
     private int[] gnssProfileValues = new int[0];
     private String[] gnssProfileLabels = new String[0];
+    private int[] baseSettingsProfileValues = new int[0];
+    private String[] baseSettingsProfileLabels = new String[0];
     private int[] gpsBaudRateValues = new int[0];
     private String[] gpsBaudRateLabels = new String[0];
+    @Nullable
+    private Integer pendingGnssProfileSelection = null;
+    @Nullable
+    private Integer pendingBaseProfileSelection = null;
 
     private GNSSClientService clientService;
     private boolean serviceBound = false;
@@ -146,15 +176,9 @@ public class MainActivity extends AppCompatActivity {
                             intent.getIntExtra(GNSSClientService.EXTRA_SATELLITES_MEDIUM, 0);
                     int weakSatellites =
                             intent.getIntExtra(GNSSClientService.EXTRA_SATELLITES_WEAK, 0);
-                    String provider =
-                            intent.getStringExtra(GNSSClientService.EXTRA_PROVIDER);
-                    float locationAge =
-                            intent.getFloatExtra(GNSSClientService.EXTRA_LOCATION_AGE, 0f);
                     updateLocationInfo(
                             location,
                             satellites,
-                            provider,
-                            locationAge,
                             strongSatellites,
                             mediumSatellites,
                             weakSatellites
@@ -201,17 +225,57 @@ public class MainActivity extends AppCompatActivity {
                     Integer gnssProfileValue = gnssProfileKnown
                             ? intent.getIntExtra(GNSSClientService.EXTRA_GNSS_PROFILE, 0)
                             : null;
+                    boolean baseProfileKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_BASE_SETTINGS_PROFILE_KNOWN, false);
+                    Integer baseProfileValue = baseProfileKnown
+                            ? intent.getIntExtra(GNSSClientService.EXTRA_BASE_SETTINGS_PROFILE, 0)
+                            : null;
+                    boolean customGnssKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_CUSTOM_GNSS_PROFILE_KNOWN, false);
+                    String customGnssFrame = customGnssKnown
+                            ? intent.getStringExtra(GNSSClientService.EXTRA_CUSTOM_GNSS_PROFILE_FRAME)
+                            : null;
+                    boolean customBaseKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_CUSTOM_BASE_SETTINGS_KNOWN, false);
+                    String customBaseFrame = customBaseKnown
+                            ? intent.getStringExtra(GNSSClientService.EXTRA_CUSTOM_BASE_SETTINGS_FRAME)
+                            : null;
                     String ssid = intent.getStringExtra(GNSSClientService.EXTRA_AP_SSID_HINT);
-                    applyDeviceSettingsUpdate(
-                            apState,
-                            true,
-                            bridgeState,
-                            true,
-                            gnssProfileValue,
-                            true,
-                            baudRate,
-                            true,
-                            ssid);
+                    boolean versionKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_DEVICE_VERSION_KNOWN, false);
+                    String versionValue =
+                            versionKnown ? intent.getStringExtra(GNSSClientService.EXTRA_DEVICE_VERSION) : null;
+                    boolean voltageKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_INPUT_VOLTAGE_KNOWN, false);
+                    Double voltageValue = null;
+                    if (voltageKnown) {
+                        double rawVoltage =
+                                intent.getDoubleExtra(GNSSClientService.EXTRA_INPUT_VOLTAGE, Double.NaN);
+                        if (!Double.isNaN(rawVoltage)) {
+                            voltageValue = rawVoltage;
+                        }
+                    }
+                    DeviceSettingsPayload payload = new DeviceSettingsPayload();
+                    payload.apKnown = apKnown;
+                    payload.apState = apState;
+                    payload.bridgeKnown = bridgeKnown;
+                    payload.bridgeState = bridgeState;
+                    payload.gnssProfileKnown = gnssProfileKnown;
+                    payload.gnssProfile = gnssProfileValue;
+                    payload.baseSettingsProfileKnown = baseProfileKnown;
+                    payload.baseSettingsProfile = baseProfileValue;
+                    payload.gpsBaudKnown = baudKnown;
+                    payload.gpsBaudRate = baudRate;
+                    payload.ssidHint = ssid;
+                    payload.deviceVersionKnown = versionKnown;
+                    payload.deviceVersion = versionValue;
+                    payload.inputVoltageKnown = voltageKnown;
+                    payload.inputVoltage = voltageValue;
+                    payload.customGnssProfileFrameKnown = customGnssKnown;
+                    payload.customGnssProfileFrame = customGnssFrame;
+                    payload.customBaseSettingsFrameKnown = customBaseKnown;
+                    payload.customBaseSettingsFrame = customBaseFrame;
+                    applyDeviceSettingsUpdate(payload);
                 }
             };
 
@@ -222,12 +286,11 @@ public class MainActivity extends AppCompatActivity {
                     if (!GNSSClientService.ACTION_OTA_STATUS.equals(intent.getAction())) {
                         return;
                     }
-                    String state = intent.getStringExtra(GNSSClientService.EXTRA_OTA_STATE);
+                    boolean guardEnabled = intent.getBooleanExtra(GNSSClientService.EXTRA_OTA_GUARD_ENABLED, false);
+                    String wifiState = intent.getStringExtra(GNSSClientService.EXTRA_OTA_WIFI_STATE);
+                    String wifiIp = intent.getStringExtra(GNSSClientService.EXTRA_OTA_WIFI_IP);
                     String message = intent.getStringExtra(GNSSClientService.EXTRA_OTA_MESSAGE);
-                    int total = intent.getIntExtra(GNSSClientService.EXTRA_OTA_TOTAL, 0);
-                    int received = intent.getIntExtra(GNSSClientService.EXTRA_OTA_RECEIVED, 0);
-                    String fileName = intent.getStringExtra(GNSSClientService.EXTRA_OTA_FILE_NAME);
-                    updateOtaStatus(state, message, total, received, fileName);
+                    updateOtaStatus(guardEnabled, wifiState, wifiIp, message);
                 }
             };
 
@@ -244,22 +307,35 @@ public class MainActivity extends AppCompatActivity {
                     updateLocationInfo(
                             clientService.getLastReceivedLocation(),
                             0,
-                            null,
-                            0f,
                             0,
                             0,
                             0
                     );
                     updateServiceStatus();
-                    applyDeviceSettingsUpdate(
-                            clientService.getApControlState(),
-                            clientService.getBridgeModeState(),
-                            clientService.getGnssProfile(),
-                            clientService.getGpsBaudRate(),
-                            clientService.getApControlSsidHint()
-                    );
+                    DeviceSettingsPayload payload = new DeviceSettingsPayload();
+                    payload.apKnown = true;
+                    payload.apState = clientService.getApControlState();
+                    payload.bridgeKnown = true;
+                    payload.bridgeState = clientService.getBridgeModeState();
+                    payload.gnssProfileKnown = true;
+                    payload.gnssProfile = clientService.getGnssProfile();
+                    payload.baseSettingsProfileKnown = true;
+                    payload.baseSettingsProfile = clientService.getBaseSettingsProfile();
+                    payload.gpsBaudKnown = true;
+                    payload.gpsBaudRate = clientService.getGpsBaudRate();
+                    payload.ssidHint = clientService.getApControlSsidHint();
+                    payload.deviceVersionKnown = true;
+                    payload.deviceVersion = clientService.getDeviceVersion();
+                    payload.inputVoltageKnown = true;
+                    payload.inputVoltage = clientService.getInputVoltage();
+                    payload.customGnssProfileFrameKnown = true;
+                    payload.customGnssProfileFrame = clientService.getCustomGnssProfileFrame();
+                    payload.customBaseSettingsFrameKnown = true;
+                    payload.customBaseSettingsFrame = clientService.getCustomBaseSettingsFrame();
+                    applyDeviceSettingsUpdate(payload);
                     clientService.refreshDeviceSettings();
-                    clientService.emitCurrentOtaStatus();
+                    clientService.emitCurrentOtaPortalState();
+                    clientService.setAlwaysMovingEnabled(AppPrefs.isAlwaysMovingEnabled(MainActivity.this));
                 }
 
                 @Override
@@ -305,30 +381,37 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initializeViews() {
-        statusBadge = findViewById(R.id.statusBadge);
         connectionBadge = findViewById(R.id.connectionBadge);
         dataAgeBadge = findViewById(R.id.dataAgeBadge);
         locationText = findViewById(R.id.locationText);
         satellitesBadge = findViewById(R.id.satellitesBadge);
-        providerBadge = findViewById(R.id.providerBadge);
-        ageBadge = findViewById(R.id.ageBadge);
         additionalInfoText = findViewById(R.id.additionalInfoText);
-        lastUpdateText = findViewById(R.id.lastUpdateText);
         requestPermissionsButton = findViewById(R.id.requestPermissionsButton);
         permissionsStatusText = findViewById(R.id.permissionsStatusText);
         mockLocationStatusText = findViewById(R.id.mockLocationStatusText);
+        permissionsCard = findViewById(R.id.permissionsCard);
         serviceToggleButton = findViewById(R.id.serviceToggleButton);
         serviceStatusText = findViewById(R.id.serviceStatusText);
         apHotspotSwitch = findViewById(R.id.apHotspotSwitch);
         bridgeModeSwitch = findViewById(R.id.bridgeModeSwitch);
         gnssProfileLayout = findViewById(R.id.gnssProfileLayout);
         gnssProfileDropdown = findViewById(R.id.gnssProfileDropdown);
+        customGnssFrameLayout = findViewById(R.id.customGnssFrameLayout);
+        customGnssFrameInput = findViewById(R.id.customGnssFrameInput);
+        customGnssFrameApplyButton = findViewById(R.id.customGnssFrameApplyButton);
+        baseSettingsProfileLayout = findViewById(R.id.baseSettingsProfileLayout);
+        baseSettingsProfileDropdown = findViewById(R.id.baseSettingsProfileDropdown);
+        customBaseFrameLayout = findViewById(R.id.customBaseFrameLayout);
+        customBaseFrameInput = findViewById(R.id.customBaseFrameInput);
+        customBaseFrameApplyButton = findViewById(R.id.customBaseFrameApplyButton);
         gpsBaudRateLayout = findViewById(R.id.gpsBaudRateLayout);
         gpsBaudRateDropdown = findViewById(R.id.gpsBaudRateDropdown);
-        otaSelectButton = findViewById(R.id.otaSelectButton);
-        otaAbortButton = findViewById(R.id.otaAbortButton);
-        otaStatusText = findViewById(R.id.otaStatusText);
-        otaProgressText = findViewById(R.id.otaProgressText);
+        wifiStatusText = findViewById(R.id.wifiStatusText);
+        otaSwitch = findViewById(R.id.otaSwitch);
+        swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
+        inputVoltageText = findViewById(R.id.inputVoltageText);
+        deviceVersionText = findViewById(R.id.deviceVersionText);
+        alwaysMovingSwitch = findViewById(R.id.alwaysMovingSwitch);
 
         gnssProfileLabels = getResources().getStringArray(R.array.gnss_profile_labels);
         gnssProfileValues = getResources().getIntArray(R.array.gnss_profile_values);
@@ -350,6 +433,30 @@ public class MainActivity extends AppCompatActivity {
                         gnssProfileDropdown.requestFocus();
                     }
                     showGnssProfileDropdown();
+                });
+            }
+        }
+
+        baseSettingsProfileLabels = getResources().getStringArray(R.array.base_settings_profile_labels);
+        baseSettingsProfileValues = getResources().getIntArray(R.array.base_settings_profile_values);
+        if (baseSettingsProfileDropdown != null) {
+            ArrayAdapter<String> baseAdapter =
+                    new NoFilterArrayAdapter(this, android.R.layout.simple_list_item_1, Arrays.asList(baseSettingsProfileLabels));
+            baseSettingsProfileDropdown.setAdapter(baseAdapter);
+            baseSettingsProfileDropdown.setKeyListener(null);
+            baseSettingsProfileDropdown.setText("", false);
+            baseSettingsProfileDropdown.setOnItemClickListener((parent, view, position, id) -> {
+                if (position >= 0 && position < baseSettingsProfileValues.length) {
+                    handleBaseProfileSelection(baseSettingsProfileValues[position]);
+                }
+            });
+            baseSettingsProfileDropdown.setOnClickListener(v -> showBaseProfileDropdown());
+            if (baseSettingsProfileLayout != null) {
+                baseSettingsProfileLayout.setEndIconOnClickListener(v -> {
+                    if (baseSettingsProfileDropdown != null) {
+                        baseSettingsProfileDropdown.requestFocus();
+                    }
+                    showBaseProfileDropdown();
                 });
             }
         }
@@ -380,10 +487,8 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        statusBadge.setText(getString(R.string.unknown));
         connectionBadge.setText(getString(R.string.unknown));
         dataAgeBadge.setText(getString(R.string.unknown));
-        applyBadgeStyle(statusBadge, R.color.chip_neutral, R.color.chip_text_light);
         applyBadgeStyle(connectionBadge, R.color.chip_neutral, R.color.chip_text_light);
         applyBadgeStyle(dataAgeBadge, R.color.chip_neutral, R.color.chip_text_light);
         resetLocationUi();
@@ -412,10 +517,89 @@ public class MainActivity extends AppCompatActivity {
             }
             handleBridgeSwitchToggle(isChecked);
         });
-        otaSelectButton.setOnClickListener(v -> openFirmwarePicker());
-        otaAbortButton.setOnClickListener(v -> abortOtaUpdate());
+        otaSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (suppressOtaSwitchChange) {
+                return;
+            }
+            toggleOtaPortal(isChecked);
+        });
+        if (customGnssFrameApplyButton != null) {
+            customGnssFrameApplyButton.setOnClickListener(v -> applyCustomGnssFrame());
+        }
+        if (customBaseFrameApplyButton != null) {
+            customBaseFrameApplyButton.setOnClickListener(v -> applyCustomBaseFrame());
+        }
+        if (swipeRefreshLayout != null) {
+            swipeRefreshLayout.setColorSchemeResources(
+                    R.color.md_primary,
+                    R.color.chip_success,
+                    R.color.chip_error
+            );
+            swipeRefreshLayout.setOnRefreshListener(this::triggerManualRefresh);
+        }
+        setupAlwaysMovingToggle();
         updateServiceStatus();
         updateDeviceSettingsUi();
+    }
+
+    private void setupAlwaysMovingToggle() {
+        if (alwaysMovingSwitch == null) {
+            return;
+        }
+        suppressAlwaysMovingChange = true;
+        alwaysMovingSwitch.setChecked(AppPrefs.isAlwaysMovingEnabled(this));
+        suppressAlwaysMovingChange = false;
+        alwaysMovingSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (suppressAlwaysMovingChange) {
+                return;
+            }
+            if (isChecked) {
+                showAlwaysMovingDialog();
+            } else {
+                AppPrefs.setAlwaysMovingEnabled(this, false);
+                syncAlwaysMovingSetting();
+            }
+            refreshAlwaysMovingUi();
+        });
+    }
+
+    private void refreshAlwaysMovingUi() {
+        if (alwaysMovingSwitch == null) {
+            return;
+        }
+        suppressAlwaysMovingChange = true;
+        alwaysMovingSwitch.setChecked(AppPrefs.isAlwaysMovingEnabled(this));
+        suppressAlwaysMovingChange = false;
+    }
+
+    private void showAlwaysMovingDialog() {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.always_moving_dialog_title)
+                .setMessage(R.string.always_moving_dialog_message)
+                .setPositiveButton(
+                        R.string.dialog_ok,
+                        (dialog, which) -> {
+                            AppPrefs.setAlwaysMovingEnabled(this, true);
+                            refreshAlwaysMovingUi();
+                            syncAlwaysMovingSetting();
+                        })
+                .setNegativeButton(
+                        R.string.dialog_cancel,
+                        (dialog, which) -> {
+                            AppPrefs.setAlwaysMovingEnabled(this, false);
+                            refreshAlwaysMovingUi();
+                        })
+                .setOnCancelListener(dialog -> {
+                    AppPrefs.setAlwaysMovingEnabled(this, false);
+                    refreshAlwaysMovingUi();
+                })
+                .show();
+    }
+
+    private void syncAlwaysMovingSetting() {
+        if (serviceBound && clientService != null) {
+            clientService.setAlwaysMovingEnabled(AppPrefs.isAlwaysMovingEnabled(this));
+        }
     }
 
     private void startAndBindService() {
@@ -473,74 +657,64 @@ public class MainActivity extends AppCompatActivity {
         Toast.makeText(this, getString(R.string.toast_service_disabled), Toast.LENGTH_LONG).show();
     }
 
-    private void openFirmwarePicker() {
-        if (!isServiceReadyForSettings()) {
-            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
-            updateOtaControlsState();
-            return;
-        }
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.setType("*/*");
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.putExtra(
-                Intent.EXTRA_MIME_TYPES,
-                new String[]{"application/octet-stream", "application/binary", "application/x-binary"}
-        );
-        startActivityForResult(intent, OTA_FILE_PICK_REQUEST_CODE);
-    }
-
-    private void handleFirmwareSelected(@NonNull Uri uri) {
+    private void toggleOtaPortal(boolean desired) {
         if (!isServiceReadyForSettings() || clientService == null) {
             Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
             updateOtaControlsState();
             return;
         }
-        try {
-            getContentResolver().takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-            );
-        } catch (Exception ignored) {
+        boolean accepted = clientService.requestOtaPortal(desired);
+        if (!accepted) {
+            Toast.makeText(this, R.string.ota_guard_write_failed, Toast.LENGTH_LONG).show();
         }
-        String displayName = resolveDisplayName(uri);
-        clientService.startOtaUpdate(uri, displayName);
-        otaStatusText.setText(getString(R.string.ota_status_preparing, displayName));
-        otaAbortButton.setVisibility(View.VISIBLE);
-        otaAbortButton.setEnabled(true);
-        otaInProgress = true;
         updateOtaControlsState();
     }
 
-    private void abortOtaUpdate() {
-        if (clientService != null) {
-            clientService.abortOtaUpdate();
+    private void triggerManualRefresh() {
+        if (!isServiceReadyForSettings() || clientService == null) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            stopRefreshIndicator();
+            return;
         }
-        otaInProgress = false;
-        updateOtaControlsState();
+        clientService.refreshDeviceSettings();
+        clientService.refreshOtaPortalState();
+        uiHandler.postDelayed(this::stopRefreshIndicator, 1800);
     }
 
-    @Nullable
-    private String resolveDisplayName(@NonNull Uri uri) {
-        String result = null;
-        Cursor cursor = null;
+    private void stopRefreshIndicator() {
+        if (swipeRefreshLayout != null && swipeRefreshLayout.isRefreshing()) {
+            swipeRefreshLayout.setRefreshing(false);
+        }
+    }
+
+    private void makeWifiClickable(boolean enabled) {
+        if (wifiStatusText == null) {
+            return;
+        }
+        if (enabled && wifiIp != null) {
+            wifiStatusText.setPaintFlags(wifiStatusText.getPaintFlags() | Paint.UNDERLINE_TEXT_FLAG);
+            wifiStatusText.setClickable(true);
+            wifiStatusText.setOnClickListener(v -> openUpdatePage());
+        } else {
+            wifiStatusText.setPaintFlags(wifiStatusText.getPaintFlags() & (~Paint.UNDERLINE_TEXT_FLAG));
+            wifiStatusText.setClickable(false);
+            wifiStatusText.setOnClickListener(null);
+        }
+    }
+
+    private void openUpdatePage() {
+        String ip = wifiIp;
+        if (ip == null || ip.isEmpty()) {
+            Toast.makeText(this, R.string.ota_link_unavailable, Toast.LENGTH_LONG).show();
+            return;
+        }
+        String url = "http://" + ip + "/";
         try {
-            cursor = getContentResolver().query(uri, null, null, null, null);
-            if (cursor != null && cursor.moveToFirst()) {
-                int column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                if (column >= 0) {
-                    result = cursor.getString(column);
-                }
-            }
-        } catch (Exception ignored) {
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
+            Intent viewIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(viewIntent);
+        } catch (Exception e) {
+            Toast.makeText(this, R.string.ota_link_unavailable, Toast.LENGTH_LONG).show();
         }
-        if (result == null || result.isEmpty()) {
-            result = uri.getLastPathSegment();
-        }
-        return result != null ? result : getString(R.string.unknown);
     }
 
     private void updateServiceStatus() {
@@ -603,10 +777,11 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         if (allGranted) {
-            permissionsStatusText.setText(R.string.all_permissions_granted);
-            permissionsStatusText.setTextColor(
-                    ContextCompat.getColor(this, R.color.chip_success));
             requestPermissionsButton.setVisibility(View.GONE);
+            mockLocationStatusText.setVisibility(View.GONE);
+            if (permissionsCard != null) {
+                permissionsCard.setVisibility(View.GONE);
+            }
         } else {
             String text =
                     String.format(
@@ -617,69 +792,62 @@ public class MainActivity extends AppCompatActivity {
             permissionsStatusText.setTextColor(
                     ContextCompat.getColor(this, R.color.chip_error));
             requestPermissionsButton.setVisibility(View.VISIBLE);
+            if (permissionsCard != null) {
+                permissionsCard.setVisibility(View.VISIBLE);
+            }
         }
     }
 
     private void updateOtaStatus(
-            @Nullable String state,
-            @Nullable String message,
-            int total,
-            int received,
-            @Nullable String fileName
+            boolean guardEnabled,
+            @Nullable String wifiState,
+            @Nullable String wifiIp,
+            @Nullable String message
     ) {
         runOnUiThread(
                 () -> {
-                    String statusText;
-                    if (message != null && !message.isEmpty()) {
-                        statusText = message;
-                    } else if ("validating".equals(state)) {
-                        statusText = getString(R.string.ota_status_validating);
-                    } else if ("ready".equals(state)) {
-                        statusText = getString(R.string.ota_status_ready);
-                    } else if ("error".equals(state)) {
-                        statusText = getString(R.string.ota_status_error_generic);
-                    } else if (("sending".equals(state) || "chunk_ack".equals(state) || "receiving".equals(state)) && fileName != null) {
-                        statusText = getString(R.string.ota_status_sending, fileName);
-                    } else if ("preparing".equals(state) && fileName != null) {
-                        statusText = getString(R.string.ota_status_preparing, fileName);
-                    } else {
-                        statusText = getString(R.string.ota_status_idle);
-                    }
-                    otaStatusText.setText(statusText);
-                    if (total > 0) {
-                        double percent = (received * 100.0) / total;
-                        otaProgressText.setText(
-                                String.format(
-                                        Locale.getDefault(),
-                                        getString(R.string.ota_progress_format),
-                                        percent,
-                                        received,
-                                        total
-                                )
-                        );
-                    } else {
-                        otaProgressText.setText(getString(R.string.ota_progress_placeholder));
-                    }
-                    boolean active =
-                            state != null
-                                    && !state.isEmpty()
-                                    && !"idle".equals(state)
-                                    && !"ready".equals(state)
-                                    && !"error".equals(state);
-                    otaInProgress = active;
-                    otaAbortButton.setVisibility(active ? View.VISIBLE : View.GONE);
-                    otaAbortButton.setEnabled(active);
-                    updateOtaControlsState();
-                });
+                    otaGuardEnabled = guardEnabled;
+                    this.wifiState = wifiState;
+                    this.wifiIp = (wifiIp != null && !wifiIp.isEmpty()) ? wifiIp : null;
+
+                    String wifiText;
+                    String effectiveState = wifiState != null ? wifiState : "unknown";
+                    switch (effectiveState) {
+                        case "connected":
+                            wifiText =
+                                    this.wifiIp != null
+                                            ? getString(R.string.ota_wifi_connected_ip, this.wifiIp)
+                                            : getString(R.string.ota_wifi_connected);
+                            break;
+                        case "connecting":
+                            wifiText = getString(R.string.ota_wifi_connecting);
+                            break;
+                        case "disconnected":
+                            wifiText = getString(R.string.ota_wifi_disconnected);
+                            break;
+                        default:
+                    wifiText = getString(R.string.ota_wifi_unknown);
+                    break;
+            }
+            wifiStatusText.setText(wifiText);
+
+            makeWifiClickable(this.wifiIp != null);
+
+            suppressOtaSwitchChange = true;
+            otaSwitch.setChecked(otaGuardEnabled);
+            suppressOtaSwitchChange = false;
+            updateOtaControlsState();
+            stopRefreshIndicator();
+        });
     }
 
     private void updateOtaControlsState() {
-        boolean canStart = isServiceReadyForSettings() && !otaInProgress;
-        if (otaSelectButton != null) {
-            otaSelectButton.setEnabled(canStart);
-        }
-        if (otaAbortButton != null && !otaInProgress) {
-            otaAbortButton.setVisibility(View.GONE);
+        boolean connected = isServiceReadyForSettings();
+        if (otaSwitch != null) {
+            otaSwitch.setEnabled(connected);
+            suppressOtaSwitchChange = true;
+            otaSwitch.setChecked(otaGuardEnabled);
+            suppressOtaSwitchChange = false;
         }
     }
 
@@ -749,21 +917,11 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode == MOCK_LOCATION_SETTINGS_REQUEST_CODE) {
             updatePermissionsStatus();
         }
-        if (requestCode == OTA_FILE_PICK_REQUEST_CODE && resultCode == RESULT_OK && data != null) {
-            Uri uri = data.getData();
-            if (uri != null) {
-                handleFirmwareSelected(uri);
-            }
-        }
     }
 
     private void updateConnectionStatus(boolean connected) {
         runOnUiThread(
                 () -> {
-                    String statusValue =
-                            getString(connected ? R.string.connected : R.string.disconnected);
-                    statusBadge.setText(statusValue);
-
                     String connectionValue =
                             getString(
                                     connected
@@ -773,34 +931,39 @@ public class MainActivity extends AppCompatActivity {
                     connectionBadge.setText(connectionValue);
 
                     if (connected) {
-                        applyBadgeStyle(statusBadge, R.color.chip_success, R.color.chip_text_dark);
                         applyBadgeStyle(connectionBadge, R.color.chip_success, R.color.chip_text_dark);
                     } else {
-                        applyBadgeStyle(statusBadge, R.color.chip_error, R.color.chip_text_light);
                         applyBadgeStyle(connectionBadge, R.color.chip_error, R.color.chip_text_light);
                         applyBadgeStyle(dataAgeBadge, R.color.chip_neutral, R.color.chip_text_light);
                         dataAgeBadge.setText(getString(R.string.unknown));
                         resetLocationUi();
+                        otaGuardEnabled = false;
+                        wifiIp = null;
+                        wifiState = null;
+                        wifiStatusText.setText(R.string.ota_wifi_unknown);
+                        makeWifiClickable(false);
+                        suppressOtaSwitchChange = true;
+                        otaSwitch.setChecked(false);
+                        suppressOtaSwitchChange = false;
+                        pendingGnssProfileSelection = null;
+                        pendingBaseProfileSelection = null;
                     }
                     updateDeviceSettingsUi();
+                    stopRefreshIndicator();
                 });
     }
 
     private void resetLocationUi() {
         locationText.setText(getString(R.string.location_unknown));
         satellitesBadge.setText(getString(R.string.unknown));
-        providerBadge.setText(getString(R.string.unknown));
-        ageBadge.setText(getString(R.string.unknown));
         additionalInfoText.setText(getString(R.string.additional_info_unknown));
-        lastUpdateText.setText(getString(R.string.movement_last_update_unknown));
         applyBadgeStyle(satellitesBadge, R.color.chip_neutral, R.color.chip_text_light);
-        applyBadgeStyle(providerBadge, R.color.chip_neutral, R.color.chip_text_light);
-        applyBadgeStyle(ageBadge, R.color.chip_neutral, R.color.chip_text_light);
     }
 
     private void refreshDeviceSettingsOnFocus() {
         if (serviceBound && clientService != null) {
             clientService.refreshDeviceSettings();
+            clientService.refreshOtaPortalState();
         }
     }
 
@@ -816,56 +979,43 @@ public class MainActivity extends AppCompatActivity {
         badge.setTextColor(ContextCompat.getColor(this, textColorRes));
     }
 
-    private void applyDeviceSettingsUpdate(
-            @Nullable Boolean apState,
-            boolean updateAp,
-            @Nullable Boolean bridgeState,
-            boolean updateBridge,
-            @Nullable Integer gnssProfileValue,
-            boolean updateGnssProfile,
-            @Nullable Integer baudRate,
-            boolean updateBaud,
-            @Nullable String ssid
-    ) {
+    private void applyDeviceSettingsUpdate(@NonNull DeviceSettingsPayload payload) {
         runOnUiThread(
                 () -> {
-                    if (updateAp) {
-                        apControlState = apState;
+                    if (payload.apKnown) {
+                        apControlState = payload.apState;
                     }
-                    if (updateBridge) {
-                        bridgeModeState = bridgeState;
+                    if (payload.bridgeKnown) {
+                        bridgeModeState = payload.bridgeState;
                     }
-                    if (updateGnssProfile) {
-                        gnssProfile = gnssProfileValue;
+                    if (payload.gnssProfileKnown) {
+                        gnssProfile = payload.gnssProfile;
+                        pendingGnssProfileSelection = null;
                     }
-                    if (updateBaud) {
-                        gpsBaudRate = baudRate;
+                    if (payload.baseSettingsProfileKnown) {
+                        baseSettingsProfile = payload.baseSettingsProfile;
+                        pendingBaseProfileSelection = null;
                     }
-                    if (ssid != null && !ssid.isEmpty()) {
-                        apSsidHint = ssid;
+                    if (payload.gpsBaudKnown) {
+                        gpsBaudRate = payload.gpsBaudRate;
+                    }
+                    if (payload.ssidHint != null && !payload.ssidHint.isEmpty()) {
+                        apSsidHint = payload.ssidHint;
+                    }
+                    if (payload.deviceVersionKnown) {
+                        deviceVersion = payload.deviceVersion;
+                    }
+                    if (payload.inputVoltageKnown) {
+                        inputVoltage = payload.inputVoltage;
+                    }
+                    if (payload.customGnssProfileFrameKnown) {
+                        customGnssProfileFrame = payload.customGnssProfileFrame;
+                    }
+                    if (payload.customBaseSettingsFrameKnown) {
+                        customBaseSettingsFrame = payload.customBaseSettingsFrame;
                     }
                     updateDeviceSettingsUi();
                 });
-    }
-
-    private void applyDeviceSettingsUpdate(
-            @Nullable Boolean apState,
-            @Nullable Boolean bridgeState,
-            @Nullable Integer gnssProfileValue,
-            @Nullable Integer baudRate,
-            @Nullable String ssid
-    ) {
-        applyDeviceSettingsUpdate(
-                apState,
-                true,
-                bridgeState,
-                true,
-                gnssProfileValue,
-                true,
-                baudRate,
-                true,
-                ssid
-        );
     }
 
     private void updateDeviceSettingsUi() {
@@ -895,17 +1045,76 @@ public class MainActivity extends AppCompatActivity {
             gnssProfileLayout.setEnabled(connected);
             gnssProfileDropdown.setEnabled(connected);
             suppressGnssProfileChange = true;
-            if (gnssProfile != null) {
-                String label = findGnssProfileLabel(gnssProfile);
+            Integer profileToShow = gnssProfile != null ? gnssProfile : pendingGnssProfileSelection;
+            if (profileToShow != null) {
+                String label = findGnssProfileLabel(profileToShow);
                 if (label != null) {
                     gnssProfileDropdown.setText(label, false);
                 } else {
-                    gnssProfileDropdown.setText(String.valueOf(gnssProfile), false);
+                    gnssProfileDropdown.setText(String.valueOf(profileToShow), false);
                 }
             } else {
                 gnssProfileDropdown.setText("", false);
             }
             suppressGnssProfileChange = false;
+        }
+
+        if (customGnssFrameLayout != null) {
+            boolean showCustomGnss = isCustomGnssProfileSelected();
+            customGnssFrameLayout.setVisibility(showCustomGnss ? View.VISIBLE : View.GONE);
+            customGnssFrameLayout.setEnabled(connected && showCustomGnss);
+            if (customGnssFrameInput != null) {
+                if (!showCustomGnss) {
+                    customGnssFrameInput.setError(null);
+                }
+                customGnssFrameInput.setEnabled(connected && showCustomGnss);
+                if (!customGnssFrameInput.hasFocus()) {
+                    String value = customGnssProfileFrame != null ? customGnssProfileFrame : "";
+                    customGnssFrameInput.setText(value);
+                }
+            }
+        }
+        if (customGnssFrameApplyButton != null) {
+            customGnssFrameApplyButton.setVisibility(isCustomGnssProfileSelected() ? View.VISIBLE : View.GONE);
+            customGnssFrameApplyButton.setEnabled(connected && isCustomGnssProfileSelected());
+        }
+
+        if (baseSettingsProfileLayout != null && baseSettingsProfileDropdown != null) {
+            baseSettingsProfileLayout.setEnabled(connected);
+            baseSettingsProfileDropdown.setEnabled(connected);
+            suppressBaseProfileChange = true;
+            Integer profileToShow = baseSettingsProfile != null ? baseSettingsProfile : pendingBaseProfileSelection;
+            if (profileToShow != null) {
+                String label = findBaseProfileLabel(profileToShow);
+                if (label != null) {
+                    baseSettingsProfileDropdown.setText(label, false);
+                } else {
+                    baseSettingsProfileDropdown.setText(String.valueOf(profileToShow), false);
+                }
+            } else {
+                baseSettingsProfileDropdown.setText("", false);
+            }
+            suppressBaseProfileChange = false;
+        }
+
+        if (customBaseFrameLayout != null) {
+            boolean showCustomBase = isCustomBaseProfileSelected();
+            customBaseFrameLayout.setVisibility(showCustomBase ? View.VISIBLE : View.GONE);
+            customBaseFrameLayout.setEnabled(connected && showCustomBase);
+            if (customBaseFrameInput != null) {
+                if (!showCustomBase) {
+                    customBaseFrameInput.setError(null);
+                }
+                customBaseFrameInput.setEnabled(connected && showCustomBase);
+                if (!customBaseFrameInput.hasFocus()) {
+                    String value = customBaseSettingsFrame != null ? customBaseSettingsFrame : "";
+                    customBaseFrameInput.setText(value);
+                }
+            }
+        }
+        if (customBaseFrameApplyButton != null) {
+            customBaseFrameApplyButton.setVisibility(isCustomBaseProfileSelected() ? View.VISIBLE : View.GONE);
+            customBaseFrameApplyButton.setEnabled(connected && isCustomBaseProfileSelected());
         }
 
         if (gpsBaudRateLayout != null && gpsBaudRateDropdown != null) {
@@ -925,7 +1134,24 @@ public class MainActivity extends AppCompatActivity {
             suppressGpsBaudChange = false;
         }
 
+        if (inputVoltageText != null) {
+            String voltageValue =
+                    inputVoltage != null
+                            ? getString(R.string.settings_input_voltage_label, inputVoltage)
+                            : getString(R.string.settings_input_voltage_unknown);
+            inputVoltageText.setText(voltageValue);
+        }
+
+        if (deviceVersionText != null) {
+            String versionValue =
+                    deviceVersion != null
+                            ? getString(R.string.settings_device_version_label, deviceVersion)
+                            : getString(R.string.settings_device_version_unknown);
+            deviceVersionText.setText(versionValue);
+        }
+
         updateOtaControlsState();
+        stopRefreshIndicator();
     }
 
     @Nullable
@@ -940,6 +1166,30 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return null;
+    }
+
+    @Nullable
+    private String findBaseProfileLabel(@Nullable Integer profileValue) {
+        if (profileValue == null || baseSettingsProfileValues == null || baseSettingsProfileLabels == null) {
+            return null;
+        }
+        int length = Math.min(baseSettingsProfileValues.length, baseSettingsProfileLabels.length);
+        for (int index = 0; index < length; index++) {
+            if (baseSettingsProfileValues[index] == profileValue) {
+                return baseSettingsProfileLabels[index];
+            }
+        }
+        return null;
+    }
+
+    private boolean isCustomGnssProfileSelected() {
+        Integer profileValue = gnssProfile != null ? gnssProfile : pendingGnssProfileSelection;
+        return profileValue != null && profileValue == GNSS_PROFILE_CUSTOM_VALUE;
+    }
+
+    private boolean isCustomBaseProfileSelected() {
+        Integer profileValue = baseSettingsProfile != null ? baseSettingsProfile : pendingBaseProfileSelection;
+        return profileValue != null && profileValue == BASE_PROFILE_CUSTOM_VALUE;
     }
 
     @Nullable
@@ -967,6 +1217,22 @@ public class MainActivity extends AppCompatActivity {
                     }
                     if (gnssProfileDropdown.isAttachedToWindow()) {
                         gnssProfileDropdown.showDropDown();
+                    }
+                }
+        );
+    }
+
+    private void showBaseProfileDropdown() {
+        if (baseSettingsProfileDropdown == null || !baseSettingsProfileDropdown.isEnabled()) {
+            return;
+        }
+        baseSettingsProfileDropdown.post(
+                () -> {
+                    if (baseSettingsProfileDropdown == null || !baseSettingsProfileDropdown.isEnabled()) {
+                        return;
+                    }
+                    if (baseSettingsProfileDropdown.isAttachedToWindow()) {
+                        baseSettingsProfileDropdown.showDropDown();
                     }
                 }
         );
@@ -1139,13 +1405,17 @@ public class MainActivity extends AppCompatActivity {
         if (gnssProfileDropdown != null) {
             gnssProfileDropdown.dismissDropDown();
         }
+        pendingGnssProfileSelection = desiredProfile;
+        updateDeviceSettingsUi();
         if (!isServiceReadyForSettings() || clientService == null) {
             Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            pendingGnssProfileSelection = null;
             uiHandler.post(this::updateDeviceSettingsUi);
             return;
         }
         Integer current = gnssProfile;
         if (current != null && current == desiredProfile) {
+            pendingGnssProfileSelection = null;
             return;
         }
         new MaterialAlertDialogBuilder(this)
@@ -1161,6 +1431,7 @@ public class MainActivity extends AppCompatActivity {
                             boolean accepted = clientService.requestGnssProfileChange(desiredProfile);
                             if (!accepted) {
                                 Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                                pendingGnssProfileSelection = null;
                                 updateDeviceSettingsUi();
                                 return;
                             }
@@ -1173,8 +1444,14 @@ public class MainActivity extends AppCompatActivity {
                                     500
                             );
                         })
-                .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> updateDeviceSettingsUi())
-                .setOnCancelListener(dialog -> updateDeviceSettingsUi())
+                .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> {
+                    pendingGnssProfileSelection = null;
+                    updateDeviceSettingsUi();
+                })
+                .setOnCancelListener(dialog -> {
+                    pendingGnssProfileSelection = null;
+                    updateDeviceSettingsUi();
+                })
                 .show();
     }
 
@@ -1222,6 +1499,160 @@ public class MainActivity extends AppCompatActivity {
                 .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> updateDeviceSettingsUi())
                 .setOnCancelListener(dialog -> updateDeviceSettingsUi())
                 .show();
+    }
+
+    private void handleBaseProfileSelection(int desiredProfile) {
+        if (suppressBaseProfileChange) {
+            return;
+        }
+        if (baseSettingsProfileDropdown != null) {
+            baseSettingsProfileDropdown.dismissDropDown();
+        }
+        pendingBaseProfileSelection = desiredProfile;
+        updateDeviceSettingsUi();
+        if (!isServiceReadyForSettings() || clientService == null) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            pendingBaseProfileSelection = null;
+            uiHandler.post(this::updateDeviceSettingsUi);
+            return;
+        }
+        Integer current = baseSettingsProfile;
+        if (current != null && current == desiredProfile) {
+            pendingBaseProfileSelection = null;
+            return;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.settings_base_profile_dialog_title)
+                .setMessage(R.string.settings_base_profile_dialog_message)
+                .setPositiveButton(
+                        R.string.dialog_ok,
+                        (dialog, which) -> {
+                            if (clientService == null) {
+                                pendingBaseProfileSelection = null;
+                                updateDeviceSettingsUi();
+                                return;
+                            }
+                            boolean accepted = clientService.requestBaseSettingsProfileChange(desiredProfile);
+                            if (!accepted) {
+                                Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                                pendingBaseProfileSelection = null;
+                                updateDeviceSettingsUi();
+                                return;
+                            }
+                            uiHandler.postDelayed(
+                                    () -> {
+                                        if (clientService != null) {
+                                            clientService.refreshDeviceSettings();
+                                        }
+                                    },
+                                    500
+                            );
+                        })
+                .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> {
+                    pendingBaseProfileSelection = null;
+                    updateDeviceSettingsUi();
+                })
+                .setOnCancelListener(dialog -> {
+                    pendingBaseProfileSelection = null;
+                    updateDeviceSettingsUi();
+                })
+                .show();
+    }
+
+    private void applyCustomGnssFrame() {
+        if (customGnssFrameInput == null) {
+            return;
+        }
+        String frame = customGnssFrameInput.getText() != null
+                ? customGnssFrameInput.getText().toString().trim()
+                : "";
+        if (frame.isEmpty()) {
+            customGnssFrameInput.setError(getString(R.string.settings_custom_frame_empty_error));
+            return;
+        }
+        customGnssFrameInput.setError(null);
+        if (!isServiceReadyForSettings() || clientService == null) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            return;
+        }
+        boolean accepted = clientService.updateCustomGnssProfileFrame(frame);
+        if (!accepted) {
+            Toast.makeText(this, R.string.settings_custom_frame_write_failed, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, R.string.settings_custom_frame_saved, Toast.LENGTH_SHORT).show();
+        uiHandler.postDelayed(
+                () -> {
+                    if (clientService != null) {
+                        clientService.refreshDeviceSettings();
+                    }
+                },
+                400
+        );
+    }
+
+    private void applyCustomBaseFrame() {
+        if (customBaseFrameInput == null) {
+            return;
+        }
+        String frame = customBaseFrameInput.getText() != null
+                ? customBaseFrameInput.getText().toString().trim()
+                : "";
+        if (frame.isEmpty()) {
+            customBaseFrameInput.setError(getString(R.string.settings_custom_frame_empty_error));
+            return;
+        }
+        customBaseFrameInput.setError(null);
+        if (!isServiceReadyForSettings() || clientService == null) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            return;
+        }
+        boolean accepted = clientService.updateCustomBaseSettingsFrame(frame);
+        if (!accepted) {
+            Toast.makeText(this, R.string.settings_custom_frame_write_failed, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, R.string.settings_custom_frame_saved, Toast.LENGTH_SHORT).show();
+        uiHandler.postDelayed(
+                () -> {
+                    if (clientService != null) {
+                        clientService.refreshDeviceSettings();
+                    }
+                },
+                400
+        );
+    }
+
+    private static class DeviceSettingsPayload {
+        @Nullable
+        Boolean apState;
+        boolean apKnown;
+        @Nullable
+        Boolean bridgeState;
+        boolean bridgeKnown;
+        @Nullable
+        Integer gnssProfile;
+        boolean gnssProfileKnown;
+        @Nullable
+        Integer baseSettingsProfile;
+        boolean baseSettingsProfileKnown;
+        @Nullable
+        Integer gpsBaudRate;
+        boolean gpsBaudKnown;
+        @Nullable
+        String ssidHint;
+        @Nullable
+        String deviceVersion;
+        boolean deviceVersionKnown;
+        @Nullable
+        Double inputVoltage;
+        boolean inputVoltageKnown;
+        @Nullable
+        String customGnssProfileFrame;
+        boolean customGnssProfileFrameKnown;
+        @Nullable
+        String customBaseSettingsFrame;
+        boolean customBaseSettingsFrameKnown;
     }
 
     private static class NoFilterArrayAdapter extends ArrayAdapter<String> {
@@ -1321,8 +1752,6 @@ public class MainActivity extends AppCompatActivity {
     private void updateLocationInfo(
             @Nullable Location location,
             int satellites,
-            @Nullable String provider,
-            float locationAge,
             int strongSatellites,
             int mediumSatellites,
             int weakSatellites
@@ -1370,22 +1799,6 @@ public class MainActivity extends AppCompatActivity {
                             )
                     );
                     applyBadgeStyle(satellitesBadge, R.color.chip_neutral, R.color.chip_text_light);
-
-                    providerBadge.setText(provider != null ? provider : getString(R.string.unknown));
-                    applyBadgeStyle(providerBadge, R.color.chip_neutral, R.color.chip_text_light);
-
-                    ageBadge.setText(
-                            String.format(getString(R.string.age_format), locationAge)
-                    );
-                    applyBadgeStyle(ageBadge, R.color.chip_neutral, R.color.chip_text_light);
-
-                    SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
-                    lastUpdateText.setText(
-                            String.format(
-                                    getString(R.string.movement_last_update),
-                                    sdf.format(new Date())
-                            )
-                    );
 
                     StringBuilder infoBuilder = new StringBuilder();
                     if (location.hasSpeed()) {
