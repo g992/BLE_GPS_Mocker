@@ -20,6 +20,11 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.g992.blegpsmocker.ble.BleConnectionDataListener
+import com.g992.blegpsmocker.ble.BleScanListener
+import com.g992.blegpsmocker.ble.BleUuids
+import com.g992.blegpsmocker.ble.ConnectionManager
+import com.g992.blegpsmocker.ota.OtaPortalController
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.UUID
 import org.json.JSONObject
@@ -41,23 +46,10 @@ private val GNSS_PROFILE_VALUES = setOf(0, 1, 2, 3)
 private val BASE_SETTINGS_PROFILE_VALUES = setOf(0, 1)
 private const val DEVICE_SETTING_READ_RETRY_MAX = 3
 private const val DEVICE_SETTING_READ_RETRY_DELAY_MS = 300L
-private const val OTA_PORTAL_PATH = "/update"
-private const val OTA_AP_FALLBACK_HOST = "192.168.4.1"
 private const val IDLE_DRIFT_DELAY_MS = 3_000L
 private const val IDLE_DRIFT_INTERVAL_MS = 3_000L
 private const val MIN_DRIFT_SPEED_MPS = 0.1
 private const val MIN_DRIFT_RADIUS_METERS = 0.3
-private const val WIFI_STATUS_POLL_INTERVAL_MS = 5_000L
-
-data class OtaPortalState(
-    val enabled: Boolean = false,
-    val wifiStatus: String = "unknown",
-    val ip: String? = null,
-    val message: String? = null
-) {
-    val portalUrl: String?
-        get() = ip?.takeIf { it.isNotBlank() }?.let { "http://$it$OTA_PORTAL_PATH" }
-}
 
 class GNSSClientService :
     Service(),
@@ -104,23 +96,9 @@ class GNSSClientService :
     private var customBaseSettingsFrame: String? = null
     private var deviceVersion: String? = null
     private var inputVoltage: Double? = null
-    private var otaPortalState = OtaPortalState()
-    private var otaGuardPending = false
+    private lateinit var otaPortalController: OtaPortalController
     private var alwaysMovingEnabled = false
     private val idleMovementRunnable = Runnable { emitIdleMovement() }
-    private val wifiStatusPollRunnable =
-        object : Runnable {
-            override fun run() {
-                if (!isConnected) {
-                    return
-                }
-                val manager = connectionManager
-                if (manager?.hasOtaService() == true) {
-                    manager.readCharacteristic(BleUuids.CHAR_WIFI_STATUS_UUID)
-                }
-                handler.postDelayed(this, WIFI_STATUS_POLL_INTERVAL_MS)
-            }
-        }
 
     override fun onCreate() {
         super.onCreate()
@@ -132,6 +110,15 @@ class GNSSClientService :
                 PowerManager.PARTIAL_WAKE_LOCK,
                 "GNSSClientService:WakeLock"
             )
+        otaPortalController =
+            OtaPortalController(
+                this,
+                handler,
+                { connectionManager },
+                { isConnected },
+                ::sendBroadcast
+            )
+        otaPortalController.initialize()
         ensureConnectionManager()
         val currentMockApp =
             runCatching {
@@ -139,7 +126,6 @@ class GNSSClientService :
             }.getOrNull()
         Log.d(TAG, "Current mock_location_app = $currentMockApp")
         serviceRunning = true
-        otaPortalState = OtaPortalState(message = getString(R.string.ota_status_closed))
         alwaysMovingEnabled = AppPrefs.isAlwaysMovingEnabled(this)
     }
 
@@ -850,93 +836,15 @@ class GNSSClientService :
         }
     }
 
-    fun requestOtaPortal(enable: Boolean): Boolean {
-        if (!isConnected) {
-            updateOtaPortalState(message = getString(R.string.ota_error_not_connected))
-            return false
-        }
-        val manager = connectionManager ?: return false
-        otaGuardPending = true
-        val payload = if (enable) "1" else "0"
-        val enqueued = manager.writeCharacteristic(BleUuids.CHAR_OTA_CONTROL_UUID, payload)
-        if (!enqueued) {
-            otaGuardPending = false
-            updateOtaPortalState(message = getString(R.string.ota_guard_write_failed))
-            return false
-        }
-        val pendingMessage =
-            if (enable) getString(R.string.ota_status_request_open) else getString(R.string.ota_status_request_close)
-        updateOtaPortalState(message = pendingMessage)
-        handler.postDelayed({ refreshOtaPortalState() }, 500)
-        return true
-    }
+    fun requestOtaPortal(enable: Boolean): Boolean =
+        otaPortalController.requestPortal(enable)
 
     fun refreshOtaPortalState() {
-        val manager = connectionManager ?: return
-        if (!isConnected) return
-        manager.readCharacteristic(BleUuids.CHAR_OTA_CONTROL_UUID)
-        handler.postDelayed(
-            { manager.readCharacteristic(BleUuids.CHAR_WIFI_STATUS_UUID) },
-            250
-        )
+        otaPortalController.refreshPortalState()
     }
 
     fun emitCurrentOtaPortalState() {
-        broadcastOtaPortalState()
-    }
-
-    private fun startWifiStatusPolling(immediate: Boolean = false) {
-        handler.removeCallbacks(wifiStatusPollRunnable)
-        if (!isConnected) {
-            return
-        }
-        val delayMillis = if (immediate) 0L else WIFI_STATUS_POLL_INTERVAL_MS
-        handler.postDelayed(wifiStatusPollRunnable, delayMillis)
-    }
-
-    private fun stopWifiStatusPolling() {
-        handler.removeCallbacks(wifiStatusPollRunnable)
-    }
-
-    private fun updateOtaPortalState(
-        enabled: Boolean? = null,
-        wifiStatus: String? = null,
-        ip: String? = null,
-        message: String? = null
-    ) {
-        val updated =
-            otaPortalState.copy(
-                enabled = enabled ?: otaPortalState.enabled,
-                wifiStatus = wifiStatus ?: otaPortalState.wifiStatus,
-                ip = ip ?: otaPortalState.ip,
-                message = message ?: otaPortalState.message
-            )
-        otaPortalState = updated
-        broadcastOtaPortalState(message ?: updated.message)
-    }
-
-    private fun broadcastOtaPortalState(message: String? = otaPortalState.message) {
-        val current = otaPortalState.copy(message = message ?: otaPortalState.message)
-        val intent =
-            Intent(ACTION_OTA_STATUS).apply {
-                putExtra(EXTRA_OTA_STATE, if (current.enabled) "enabled" else "disabled")
-                putExtra(EXTRA_OTA_GUARD_ENABLED, current.enabled)
-                putExtra(EXTRA_OTA_WIFI_STATE, current.wifiStatus)
-                current.ip?.let { putExtra(EXTRA_OTA_WIFI_IP, it) }
-                current.portalUrl?.let { putExtra(EXTRA_OTA_PORTAL_URL, it) }
-                putExtra(
-                    EXTRA_OTA_PORTAL_FALLBACK,
-                    "http://$OTA_AP_FALLBACK_HOST$OTA_PORTAL_PATH"
-                )
-                message?.takeIf { it.isNotBlank() }?.let { putExtra(EXTRA_OTA_MESSAGE, it) }
-            }
-        sendBroadcast(intent)
-    }
-
-    private fun resetOtaPortalState(reasonMessage: String? = null) {
-        otaGuardPending = false
-        otaPortalState = OtaPortalState(message = reasonMessage)
-        broadcastOtaPortalState(reasonMessage)
+        otaPortalController.emitCurrentState()
     }
 
     private fun hasMockLocationPermission(): Boolean {
@@ -1004,8 +912,8 @@ class GNSSClientService :
         broadcastConnectionState(true)
         broadcastDeviceSettings()
         requestDeviceSettingsRead()
-        refreshOtaPortalState()
-        startWifiStatusPolling(immediate = true)
+        otaPortalController.onConnected()
+        otaPortalController.refreshPortalState()
         updateNotification()
     }
 
@@ -1017,8 +925,7 @@ class GNSSClientService :
                 it.release()
             }
         }
-        resetOtaPortalState(getString(R.string.ota_status_closed))
-        stopWifiStatusPolling()
+        otaPortalController.onDisconnected()
         stopReceivingLocationUpdates()
         broadcastConnectionState(false)
         handler.removeCallbacks(idleMovementRunnable)
@@ -1045,8 +952,7 @@ class GNSSClientService :
         Log.d(TAG, "Services discovered on ${device.address}")
         connectionManager?.startKeepAlive()
         requestDeviceSettingsRead()
-        refreshOtaPortalState()
-        startWifiStatusPolling(immediate = true)
+        otaPortalController.refreshPortalState()
     }
 
     override fun onError(message: String) {
@@ -1180,28 +1086,15 @@ class GNSSClientService :
     }
 
     override fun onOtaStatusReceived(status: String) {
-        Log.d(TAG, "OTA status (legacy): $status")
+        otaPortalController.handleOtaStatusMessage(status)
     }
 
     override fun onOtaGuardStateChanged(enabled: Boolean) {
-        otaGuardPending = false
-        val message =
-            if (enabled) getString(R.string.ota_status_open) else getString(R.string.ota_status_closed)
-        updateOtaPortalState(enabled = enabled, message = message)
-        if (enabled) {
-            handler.postDelayed({ refreshOtaPortalState() }, 300)
-        }
+        otaPortalController.handleGuardStateChanged(enabled)
     }
 
     override fun onWifiStatusReceived(status: String, ip: String?) {
-        val normalized =
-            when (status.lowercase()) {
-                "connected" -> "connected"
-                "connecting" -> "connecting"
-                "disconnected" -> "disconnected"
-                else -> "unknown"
-            }
-        updateOtaPortalState(wifiStatus = normalized, ip = ip)
+        otaPortalController.handleWifiStatus(status, ip)
     }
 
     override fun onInputVoltageReceived(voltage: Double) {
@@ -1265,6 +1158,9 @@ class GNSSClientService :
         const val EXTRA_OTA_WIFI_IP = "ota_wifi_ip"
         const val EXTRA_OTA_PORTAL_URL = "ota_portal_url"
         const val EXTRA_OTA_PORTAL_FALLBACK = "ota_portal_fallback"
+        const val OTA_PORTAL_PATH = "/update"
+        const val OTA_AP_FALLBACK_HOST = "192.168.4.1"
+        const val WIFI_STATUS_POLL_INTERVAL_MS = 5_000L
 
         private val providerCandidates = listOf(LocationManager.GPS_PROVIDER)
 

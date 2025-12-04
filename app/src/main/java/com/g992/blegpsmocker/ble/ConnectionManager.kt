@@ -1,6 +1,5 @@
-package com.g992.blegpsmocker
+package com.g992.blegpsmocker.ble
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -10,82 +9,15 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
-import android.bluetooth.le.ScanResult
-import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.ParcelUuid
 import android.util.Log
-import androidx.core.app.ActivityCompat
-import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 import kotlin.text.Charsets
-
-object BleUuids {
-    val GPS_SERVICE_UUID: UUID = UUID.fromString("14f0514a-e15f-4ad3-89a6-b4cb3ac86abe")
-    val CHAR_COORDINATES_UUID: UUID = UUID.fromString("12c64fea-7ed9-40be-9c7e-9912a5050d23")
-    val CHAR_STATUS_UUID: UUID = UUID.fromString("3e4f5d6c-7b8a-9d0e-1f2a-3b4c5d6e7f8a")
-    val CHAR_AP_CONTROL_UUID: UUID = UUID.fromString("a37f8c1b-281d-4e15-8fb2-0b7e6ebd21c0")
-    val CHAR_MODE_CONTROL_UUID: UUID = UUID.fromString("d047f6b3-5f7c-4e5b-9c21-4c0f2b6a8f10")
-    val CHAR_GPS_BAUD_UUID: UUID = UUID.fromString("f3a1a816-28f2-4b6d-9f76-6f7aa2d06123")
-    val CHAR_GNSS_PROFILE_UUID: UUID = UUID.fromString("1fd95e59-993e-4bf5-a0b7-f481508c9a94")
-    val CHAR_BASE_SETTINGS_PROFILE_UUID: UUID =
-        UUID.fromString("7f0c9ad9-c6e8-4d2a-b3c1-1703708c6c2d")
-    val CHAR_CUSTOM_GNSS_PROFILE_UUID: UUID =
-        UUID.fromString("0abf4f57-12a2-47d9-9c61-96e0d47f332b")
-    val CHAR_CUSTOM_BASE_SETTINGS_UUID: UUID =
-        UUID.fromString("4b88f5a8-3b35-4c64-a241-0c7fdfced0e0")
-    val CHAR_KEEPALIVE_UUID: UUID = UUID.fromString("6b5d5304-4523-4db4-9a31-0f3d88c2ce11")
-    val OTA_SERVICE_UUID: UUID = UUID.fromString("c7b44a0c-24c6-4af3-97ec-19ff34d45095")
-    val CHAR_OTA_CONTROL_UUID: UUID = UUID.fromString("0f6f8ff7-1b61-4d44-9f31-3536c3a601a7")
-    val CHAR_OTA_DATA_UUID: UUID = UUID.fromString("cb08c9fd-6c57-4b51-8bbe-20f3214bf3e9")
-    val CHAR_OTA_STATUS_UUID: UUID = UUID.fromString("d19d3c86-9ba9-4a52-9244-99118bd88d08")
-    val CHAR_WIFI_STATUS_UUID: UUID = UUID.fromString("9b9a3f07-3a36-4c74-a48a-4ad0d68f1d39")
-    val CHAR_DEVICE_VERSION_UUID: UUID = UUID.fromString("c4e6f890-6b5e-4f1b-9d2e-7a3c8d2f1b01")
-    val CHAR_INPUT_VOLTAGE_UUID: UUID = UUID.fromString("81b2c6f8-cb9e-4069-9a2e-9e5abca5d56e")
-    val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-}
-
-interface BleScanListener {
-    fun onDeviceFound(device: BluetoothDevice)
-    fun onScanFailed(errorCode: Int)
-    fun onScanStopped(foundDevice: Boolean)
-}
-
-interface BleConnectionDataListener {
-    fun onConnecting(device: BluetoothDevice)
-    fun onConnected(device: BluetoothDevice)
-    fun onDisconnected(device: BluetoothDevice)
-    fun onServicesDiscovered(device: BluetoothDevice)
-    fun onError(message: String)
-    fun onCoordinatesReceived(latitude: Double, longitude: Double)
-    fun onFixStatusReceived(status: String)
-    fun onHdopReceived(hdop: Double)
-    fun onSignalLevelsReceived(levels: String)
-    fun onAltitudeReceived(altitudeMeters: Double)
-    fun onSpeedReceived(speedMetersPerSecond: Double)
-    fun onHeadingReceived(headingDegrees: Double)
-    fun onDeviceStatusReceived(status: String)
-    fun onTtffReceived(ttffSeconds: Long)
-    fun onApControlChanged(enabled: Boolean)
-    fun onBridgeModeChanged(enabled: Boolean)
-    fun onGpsBaudRateChanged(baudRate: Int)
-    fun onGnssProfileChanged(profile: Int)
-    fun onBaseSettingsProfileChanged(profile: Int)
-    fun onCustomGnssProfileFrameChanged(frame: String)
-    fun onCustomBaseSettingsFrameChanged(frame: String)
-    fun onOtaStatusReceived(status: String)
-    fun onOtaGuardStateChanged(enabled: Boolean)
-    fun onWifiStatusReceived(status: String, ip: String?)
-    fun onDeviceVersionReceived(version: String)
-    fun onInputVoltageReceived(voltage: Double)
-}
 
 @SuppressLint("MissingPermission")
 class ConnectionManager(
@@ -98,10 +30,20 @@ class ConnectionManager(
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private var bluetoothGatt: BluetoothGatt? = null
-    private val handler = Handler(Looper.getMainLooper())
-    private var isScanning = false
-    private var foundDeviceDuringScan = false
     private val tag = "ConnectionManager"
+    private val permissionChecker = BlePermissionChecker(context)
+    private val handler = Handler(Looper.getMainLooper())
+    private val scanner =
+        BleScanner(
+            bluetoothAdapter,
+            permissionChecker,
+            handler,
+            tag,
+            scanListener,
+            connectionListener
+        ) { device ->
+            connect(device)
+        }
     private var gpsService: android.bluetooth.BluetoothGattService? = null
     private var otaService: android.bluetooth.BluetoothGattService? = null
     private var keepAliveRunnable: Runnable? = null
@@ -109,43 +51,6 @@ class ConnectionManager(
     private var keepAliveRunning = false
     private var keepAliveBlocked = false
     private var currentMtu: Int = 23
-
-    private val scanCallback =
-        object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                super.onScanResult(callbackType, result)
-                if (!isScanning) return
-
-                Log.d(
-                    tag,
-                    "Device found: ${result.device.address} - ${result.device.name ?: "Unknown"}"
-                )
-                foundDeviceDuringScan = true
-                scanListener?.onDeviceFound(result.device)
-                stopScan()
-                connect(result.device)
-            }
-
-            override fun onBatchScanResults(results: MutableList<ScanResult>) {
-                super.onBatchScanResults(results)
-                if (!isScanning || results.isEmpty()) return
-
-                Log.d(tag, "Batch scan results: ${results.size}")
-                results.firstOrNull()?.let {
-                    foundDeviceDuringScan = true
-                    scanListener?.onDeviceFound(it.device)
-                    stopScan()
-                    connect(it.device)
-                }
-            }
-
-            override fun onScanFailed(errorCode: Int) {
-                super.onScanFailed(errorCode)
-                Log.e(tag, "Scan failed with error: $errorCode")
-                isScanning = false
-                scanListener?.onScanFailed(errorCode)
-            }
-        }
 
     private val gattCallback =
         object : BluetoothGattCallback() {
@@ -712,110 +617,21 @@ class ConnectionManager(
         return result
     }
 
-    fun hasScanPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) ==
-                PackageManager.PERMISSION_GRANTED
-        } else {
-            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED &&
-                ActivityCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.BLUETOOTH_ADMIN
-                ) == PackageManager.PERMISSION_GRANTED &&
-                ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) ==
-                PackageManager.PERMISSION_GRANTED
-        }
-    }
+    fun hasScanPermission(): Boolean = permissionChecker.hasScanPermission()
 
-    fun hasConnectPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
-                PackageManager.PERMISSION_GRANTED
-        } else {
-            ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) ==
-                PackageManager.PERMISSION_GRANTED &&
-                ActivityCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.BLUETOOTH_ADMIN
-                ) == PackageManager.PERMISSION_GRANTED
-        }
-    }
+    fun hasConnectPermission(): Boolean = permissionChecker.hasConnectPermission()
 
-    fun requiredPermissions(): List<String> {
-        val permissions = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
-            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            permissions.add(Manifest.permission.BLUETOOTH)
-            permissions.add(Manifest.permission.BLUETOOTH_ADMIN)
-            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-        return permissions.distinct()
-    }
+    fun requiredPermissions(): List<String> = permissionChecker.requiredPermissions()
 
     @Synchronized
     fun startScan() {
-        if (isScanning) {
-            Log.w(tag, "Scan already in progress")
-            return
-        }
-        if (!hasScanPermission()) {
-            val message =
-                "Missing permissions for BLE scan. Required: ${requiredPermissions().joinToString()}"
-            Log.e(tag, message)
-            scanListener?.onScanFailed(ScanCallback.SCAN_FAILED_INTERNAL_ERROR)
-            connectionListener?.onError(message)
-            return
-        }
-        if (bluetoothAdapter?.isEnabled == false) {
-            val message = "Bluetooth is not enabled"
-            Log.e(tag, message)
-            scanListener?.onScanFailed(ScanCallback.SCAN_FAILED_INTERNAL_ERROR)
-            connectionListener?.onError(message)
-            return
-        }
-
-        val filterByService =
-            ScanFilter.Builder().setServiceUuid(ParcelUuid(BleUuids.GPS_SERVICE_UUID)).build()
-        val filterByName = ScanFilter.Builder().setDeviceName("GPS-C3").build()
-        val scanSettings =
-            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-
-        bluetoothAdapter?.bluetoothLeScanner?.startScan(
-            listOf(filterByService, filterByName),
-            scanSettings,
-            scanCallback
-        )
-        isScanning = true
-        foundDeviceDuringScan = false
-        Log.d(tag, "BLE scan started for service ${BleUuids.GPS_SERVICE_UUID}")
-
-        handler.postDelayed(
-            {
-                if (isScanning) {
-                    Log.w(tag, "Scan timeout, stopping scan")
-                    stopScan()
-                }
-            },
-            10_000
-        )
+        scanner.updateListeners(scanListener, connectionListener)
+        scanner.startScan()
     }
 
     @Synchronized
     fun stopScan() {
-        if (!isScanning) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasScanPermission()) {
-            Log.e(tag, "Missing BLUETOOTH_SCAN permission to stop scan")
-        }
-        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-        val wasScanning = isScanning
-        isScanning = false
-        if (wasScanning) {
-            scanListener?.onScanStopped(foundDeviceDuringScan)
-        }
-        Log.d(tag, "BLE scan stopped. Device found during this scan: $foundDeviceDuringScan")
+        scanner.stopScan()
     }
 
     fun connect(device: BluetoothDevice) {
@@ -878,10 +694,12 @@ class ConnectionManager(
 
     fun setScanListener(listener: BleScanListener?) {
         scanListener = listener
+        scanner.updateListeners(scanListener, connectionListener)
     }
 
     fun setConnectionDataListener(listener: BleConnectionDataListener?) {
         connectionListener = listener
+        scanner.updateListeners(scanListener, connectionListener)
     }
 
     fun pollTelemetry(): Boolean {
