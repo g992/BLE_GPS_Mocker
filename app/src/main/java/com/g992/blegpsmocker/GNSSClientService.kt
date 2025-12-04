@@ -47,6 +47,7 @@ private const val IDLE_DRIFT_DELAY_MS = 3_000L
 private const val IDLE_DRIFT_INTERVAL_MS = 3_000L
 private const val MIN_DRIFT_SPEED_MPS = 0.1
 private const val MIN_DRIFT_RADIUS_METERS = 0.3
+private const val WIFI_STATUS_POLL_INTERVAL_MS = 5_000L
 
 data class OtaPortalState(
     val enabled: Boolean = false,
@@ -107,6 +108,19 @@ class GNSSClientService :
     private var otaGuardPending = false
     private var alwaysMovingEnabled = false
     private val idleMovementRunnable = Runnable { emitIdleMovement() }
+    private val wifiStatusPollRunnable =
+        object : Runnable {
+            override fun run() {
+                if (!isConnected) {
+                    return
+                }
+                val manager = connectionManager
+                if (manager?.hasOtaService() == true) {
+                    manager.readCharacteristic(BleUuids.CHAR_WIFI_STATUS_UUID)
+                }
+                handler.postDelayed(this, WIFI_STATUS_POLL_INTERVAL_MS)
+            }
+        }
 
     override fun onCreate() {
         super.onCreate()
@@ -871,6 +885,19 @@ class GNSSClientService :
         broadcastOtaPortalState()
     }
 
+    private fun startWifiStatusPolling(immediate: Boolean = false) {
+        handler.removeCallbacks(wifiStatusPollRunnable)
+        if (!isConnected) {
+            return
+        }
+        val delayMillis = if (immediate) 0L else WIFI_STATUS_POLL_INTERVAL_MS
+        handler.postDelayed(wifiStatusPollRunnable, delayMillis)
+    }
+
+    private fun stopWifiStatusPolling() {
+        handler.removeCallbacks(wifiStatusPollRunnable)
+    }
+
     private fun updateOtaPortalState(
         enabled: Boolean? = null,
         wifiStatus: String? = null,
@@ -978,6 +1005,7 @@ class GNSSClientService :
         broadcastDeviceSettings()
         requestDeviceSettingsRead()
         refreshOtaPortalState()
+        startWifiStatusPolling(immediate = true)
         updateNotification()
     }
 
@@ -990,6 +1018,7 @@ class GNSSClientService :
             }
         }
         resetOtaPortalState(getString(R.string.ota_status_closed))
+        stopWifiStatusPolling()
         stopReceivingLocationUpdates()
         broadcastConnectionState(false)
         handler.removeCallbacks(idleMovementRunnable)
@@ -1017,6 +1046,7 @@ class GNSSClientService :
         connectionManager?.startKeepAlive()
         requestDeviceSettingsRead()
         refreshOtaPortalState()
+        startWifiStatusPolling(immediate = true)
     }
 
     override fun onError(message: String) {
