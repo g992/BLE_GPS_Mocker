@@ -22,6 +22,8 @@ import android.provider.Settings;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Filter;
@@ -40,6 +42,7 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.MaterialAutoCompleteTextView;
 import com.google.android.material.textfield.TextInputEditText;
@@ -55,6 +58,8 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int GNSS_PROFILE_CUSTOM_VALUE = 3;
     private static final int BASE_PROFILE_CUSTOM_VALUE = 1;
+    private static final int GNSS_RECEIVER_TYPE_UBLOX = 0;
+    private static final int GNSS_RECEIVER_TYPE_GENERIC = 1;
 
     private static final String[] REQUIRED_PERMISSIONS = {
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -81,6 +86,8 @@ public class MainActivity extends AppCompatActivity {
     private TextView serviceStatusText;
     private SwitchMaterial apHotspotSwitch;
     private SwitchMaterial bridgeModeSwitch;
+    private TextInputLayout gnssReceiverTypeLayout;
+    private MaterialAutoCompleteTextView gnssReceiverTypeDropdown;
     private TextInputLayout gnssProfileLayout;
     private MaterialAutoCompleteTextView gnssProfileDropdown;
     private TextInputLayout customGnssFrameLayout;
@@ -106,6 +113,8 @@ public class MainActivity extends AppCompatActivity {
     @Nullable
     private Boolean bridgeModeState = null;
     @Nullable
+    private Integer gnssReceiverType = null;
+    @Nullable
     private Integer gnssProfile = null;
     @Nullable
     private Integer gpsBaudRate = null;
@@ -118,6 +127,7 @@ public class MainActivity extends AppCompatActivity {
     private String apSsidHint = null;
     private boolean suppressApSwitchChange = false;
     private boolean suppressBridgeSwitchChange = false;
+    private boolean suppressGnssReceiverTypeChange = false;
     private boolean suppressGnssProfileChange = false;
     private boolean suppressBaseProfileChange = false;
     private boolean suppressGpsBaudChange = false;
@@ -132,12 +142,16 @@ public class MainActivity extends AppCompatActivity {
     private String deviceVersion = null;
     @Nullable
     private Double inputVoltage = null;
+    private int[] gnssReceiverTypeValues = new int[0];
+    private String[] gnssReceiverTypeLabels = new String[0];
     private int[] gnssProfileValues = new int[0];
     private String[] gnssProfileLabels = new String[0];
     private int[] baseSettingsProfileValues = new int[0];
     private String[] baseSettingsProfileLabels = new String[0];
     private int[] gpsBaudRateValues = new int[0];
     private String[] gpsBaudRateLabels = new String[0];
+    @Nullable
+    private Integer pendingGnssReceiverTypeSelection = null;
     @Nullable
     private Integer pendingGnssProfileSelection = null;
     @Nullable
@@ -225,6 +239,11 @@ public class MainActivity extends AppCompatActivity {
                     Integer gnssProfileValue = gnssProfileKnown
                             ? intent.getIntExtra(GNSSClientService.EXTRA_GNSS_PROFILE, 0)
                             : null;
+                    boolean gnssReceiverTypeKnown =
+                            intent.getBooleanExtra(GNSSClientService.EXTRA_GNSS_RECEIVER_TYPE_KNOWN, false);
+                    Integer gnssReceiverTypeValue = gnssReceiverTypeKnown
+                            ? intent.getIntExtra(GNSSClientService.EXTRA_GNSS_RECEIVER_TYPE, 0)
+                            : null;
                     boolean baseProfileKnown =
                             intent.getBooleanExtra(GNSSClientService.EXTRA_BASE_SETTINGS_PROFILE_KNOWN, false);
                     Integer baseProfileValue = baseProfileKnown
@@ -260,6 +279,8 @@ public class MainActivity extends AppCompatActivity {
                     payload.apState = apState;
                     payload.bridgeKnown = bridgeKnown;
                     payload.bridgeState = bridgeState;
+                    payload.gnssReceiverTypeKnown = gnssReceiverTypeKnown;
+                    payload.gnssReceiverType = gnssReceiverTypeValue;
                     payload.gnssProfileKnown = gnssProfileKnown;
                     payload.gnssProfile = gnssProfileValue;
                     payload.baseSettingsProfileKnown = baseProfileKnown;
@@ -317,6 +338,8 @@ public class MainActivity extends AppCompatActivity {
                     payload.apState = clientService.getApControlState();
                     payload.bridgeKnown = true;
                     payload.bridgeState = clientService.getBridgeModeState();
+                    payload.gnssReceiverTypeKnown = true;
+                    payload.gnssReceiverType = clientService.getGnssReceiverType();
                     payload.gnssProfileKnown = true;
                     payload.gnssProfile = clientService.getGnssProfile();
                     payload.baseSettingsProfileKnown = true;
@@ -350,6 +373,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
         setContentView(R.layout.activity_main);
+        MaterialToolbar topAppBar = findViewById(R.id.topAppBar);
+        setSupportActionBar(topAppBar);
 
         initializeViews();
         startAndBindService();
@@ -357,6 +382,22 @@ public class MainActivity extends AppCompatActivity {
 
         updatePermissionsStatus();
         startUIUpdates();
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.main_menu, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        if (item.getItemId() == R.id.menu_debug) {
+            Intent debugIntent = new Intent(this, DebugActivity.class);
+            startActivity(debugIntent);
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 
     @Override
@@ -394,6 +435,8 @@ public class MainActivity extends AppCompatActivity {
         serviceStatusText = findViewById(R.id.serviceStatusText);
         apHotspotSwitch = findViewById(R.id.apHotspotSwitch);
         bridgeModeSwitch = findViewById(R.id.bridgeModeSwitch);
+        gnssReceiverTypeLayout = findViewById(R.id.gnssReceiverTypeLayout);
+        gnssReceiverTypeDropdown = findViewById(R.id.gnssReceiverTypeDropdown);
         gnssProfileLayout = findViewById(R.id.gnssProfileLayout);
         gnssProfileDropdown = findViewById(R.id.gnssProfileDropdown);
         customGnssFrameLayout = findViewById(R.id.customGnssFrameLayout);
@@ -412,6 +455,30 @@ public class MainActivity extends AppCompatActivity {
         inputVoltageText = findViewById(R.id.inputVoltageText);
         deviceVersionText = findViewById(R.id.deviceVersionText);
         alwaysMovingSwitch = findViewById(R.id.alwaysMovingSwitch);
+
+        gnssReceiverTypeLabels = getResources().getStringArray(R.array.gnss_receiver_type_labels);
+        gnssReceiverTypeValues = getResources().getIntArray(R.array.gnss_receiver_type_values);
+        if (gnssReceiverTypeDropdown != null) {
+            ArrayAdapter<String> receiverAdapter =
+                    new NoFilterArrayAdapter(this, android.R.layout.simple_list_item_1, Arrays.asList(gnssReceiverTypeLabels));
+            gnssReceiverTypeDropdown.setAdapter(receiverAdapter);
+            gnssReceiverTypeDropdown.setKeyListener(null);
+            gnssReceiverTypeDropdown.setText("", false);
+            gnssReceiverTypeDropdown.setOnItemClickListener((parent, view, position, id) -> {
+                if (position >= 0 && position < gnssReceiverTypeValues.length) {
+                    handleGnssReceiverTypeSelection(gnssReceiverTypeValues[position]);
+                }
+            });
+            gnssReceiverTypeDropdown.setOnClickListener(v -> showGnssReceiverTypeDropdown());
+            if (gnssReceiverTypeLayout != null) {
+                gnssReceiverTypeLayout.setEndIconOnClickListener(v -> {
+                    if (gnssReceiverTypeDropdown != null) {
+                        gnssReceiverTypeDropdown.requestFocus();
+                    }
+                    showGnssReceiverTypeDropdown();
+                });
+            }
+        }
 
         gnssProfileLabels = getResources().getStringArray(R.array.gnss_profile_labels);
         gnssProfileValues = getResources().getIntArray(R.array.gnss_profile_values);
@@ -945,6 +1012,7 @@ public class MainActivity extends AppCompatActivity {
                         suppressOtaSwitchChange = true;
                         otaSwitch.setChecked(false);
                         suppressOtaSwitchChange = false;
+                        pendingGnssReceiverTypeSelection = null;
                         pendingGnssProfileSelection = null;
                         pendingBaseProfileSelection = null;
                     }
@@ -987,6 +1055,10 @@ public class MainActivity extends AppCompatActivity {
                     }
                     if (payload.bridgeKnown) {
                         bridgeModeState = payload.bridgeState;
+                    }
+                    if (payload.gnssReceiverTypeKnown) {
+                        gnssReceiverType = payload.gnssReceiverType;
+                        pendingGnssReceiverTypeSelection = null;
                     }
                     if (payload.gnssProfileKnown) {
                         gnssProfile = payload.gnssProfile;
@@ -1039,6 +1111,24 @@ public class MainActivity extends AppCompatActivity {
                 bridgeModeSwitch.setChecked(Boolean.TRUE.equals(bridgeModeState));
             }
             suppressBridgeSwitchChange = false;
+        }
+
+        if (gnssReceiverTypeLayout != null && gnssReceiverTypeDropdown != null) {
+            gnssReceiverTypeLayout.setEnabled(connected);
+            gnssReceiverTypeDropdown.setEnabled(connected);
+            suppressGnssReceiverTypeChange = true;
+            Integer typeToShow = gnssReceiverType != null ? gnssReceiverType : pendingGnssReceiverTypeSelection;
+            if (typeToShow != null) {
+                String label = findGnssReceiverTypeLabel(typeToShow);
+                if (label != null) {
+                    gnssReceiverTypeDropdown.setText(label, false);
+                } else {
+                    gnssReceiverTypeDropdown.setText(String.valueOf(typeToShow), false);
+                }
+            } else {
+                gnssReceiverTypeDropdown.setText("", false);
+            }
+            suppressGnssReceiverTypeChange = false;
         }
 
         if (gnssProfileLayout != null && gnssProfileDropdown != null) {
@@ -1155,6 +1245,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Nullable
+    private String findGnssReceiverTypeLabel(@Nullable Integer typeValue) {
+        if (typeValue == null || gnssReceiverTypeValues == null || gnssReceiverTypeLabels == null) {
+            return null;
+        }
+        int length = Math.min(gnssReceiverTypeValues.length, gnssReceiverTypeLabels.length);
+        for (int index = 0; index < length; index++) {
+            if (gnssReceiverTypeValues[index] == typeValue) {
+                return gnssReceiverTypeLabels[index];
+            }
+        }
+        return null;
+    }
+
+    @Nullable
     private String findGnssProfileLabel(@Nullable Integer profileValue) {
         if (profileValue == null || gnssProfileValues == null || gnssProfileLabels == null) {
             return null;
@@ -1204,6 +1308,22 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return null;
+    }
+
+    private void showGnssReceiverTypeDropdown() {
+        if (gnssReceiverTypeDropdown == null || !gnssReceiverTypeDropdown.isEnabled()) {
+            return;
+        }
+        gnssReceiverTypeDropdown.post(
+                () -> {
+                    if (gnssReceiverTypeDropdown == null || !gnssReceiverTypeDropdown.isEnabled()) {
+                        return;
+                    }
+                    if (gnssReceiverTypeDropdown.isAttachedToWindow()) {
+                        gnssReceiverTypeDropdown.showDropDown();
+                    }
+                }
+        );
     }
 
     private void showGnssProfileDropdown() {
@@ -1396,6 +1516,67 @@ public class MainActivity extends AppCompatActivity {
                     500
             );
         }
+    }
+
+    private void handleGnssReceiverTypeSelection(int desiredType) {
+        if (suppressGnssReceiverTypeChange) {
+            return;
+        }
+        if (desiredType != GNSS_RECEIVER_TYPE_UBLOX && desiredType != GNSS_RECEIVER_TYPE_GENERIC) {
+            return;
+        }
+        if (gnssReceiverTypeDropdown != null) {
+            gnssReceiverTypeDropdown.dismissDropDown();
+        }
+        pendingGnssReceiverTypeSelection = desiredType;
+        updateDeviceSettingsUi();
+        if (!isServiceReadyForSettings() || clientService == null) {
+            Toast.makeText(this, R.string.settings_not_connected, Toast.LENGTH_LONG).show();
+            pendingGnssReceiverTypeSelection = null;
+            uiHandler.post(this::updateDeviceSettingsUi);
+            return;
+        }
+        Integer current = gnssReceiverType;
+        if (current != null && current == desiredType) {
+            pendingGnssReceiverTypeSelection = null;
+            return;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.settings_gnss_receiver_type_dialog_title)
+                .setMessage(R.string.settings_gnss_receiver_type_dialog_message)
+                .setPositiveButton(
+                        R.string.dialog_ok,
+                        (dialog, which) -> {
+                            if (clientService == null) {
+                                pendingGnssReceiverTypeSelection = null;
+                                updateDeviceSettingsUi();
+                                return;
+                            }
+                            boolean accepted = clientService.requestGnssReceiverTypeChange(desiredType);
+                            if (!accepted) {
+                                Toast.makeText(this, R.string.settings_write_failed, Toast.LENGTH_LONG).show();
+                                pendingGnssReceiverTypeSelection = null;
+                                updateDeviceSettingsUi();
+                                return;
+                            }
+                            uiHandler.postDelayed(
+                                    () -> {
+                                        if (clientService != null) {
+                                            clientService.refreshDeviceSettings();
+                                        }
+                                    },
+                                    500
+                            );
+                        })
+                .setNegativeButton(R.string.dialog_cancel, (dialog, which) -> {
+                    pendingGnssReceiverTypeSelection = null;
+                    updateDeviceSettingsUi();
+                })
+                .setOnCancelListener(dialog -> {
+                    pendingGnssReceiverTypeSelection = null;
+                    updateDeviceSettingsUi();
+                })
+                .show();
     }
 
     private void handleGnssProfileSelection(int desiredProfile) {
@@ -1630,6 +1811,9 @@ public class MainActivity extends AppCompatActivity {
         @Nullable
         Boolean bridgeState;
         boolean bridgeKnown;
+        @Nullable
+        Integer gnssReceiverType;
+        boolean gnssReceiverTypeKnown;
         @Nullable
         Integer gnssProfile;
         boolean gnssProfileKnown;

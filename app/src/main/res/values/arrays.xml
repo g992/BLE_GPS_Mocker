@@ -23,6 +23,15 @@
         <item>921600</item>
     </integer-array>
 
+    <string-array name="gnss_receiver_type_labels">
+        <item>u-blox (UBX, по умолчанию)</item>
+        <item>Generic / только NMEA</item>
+    </string-array>
+    <integer-array name="gnss_receiver_type_values">
+        <item>0</item>
+        <item>1</item>
+    </integer-array>
+
     <string-array name="gnss_profile_labels">
         <item>Все системы (по умолчанию)</item>
         <item>ГЛОНАСС + BeiDou + Galileo</item>

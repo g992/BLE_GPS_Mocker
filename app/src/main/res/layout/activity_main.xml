@@ -26,6 +26,16 @@
             android:paddingEnd="16dp"
             android:gravity="center_horizontal">
 
+            <com.google.android.material.appbar.MaterialToolbar
+                android:id="@+id/topAppBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="@color/md_background"
+                android:elevation="0dp"
+                app:title="@string/app_name"
+                app:titleTextColor="@color/md_on_surface" />
+
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -268,6 +278,29 @@
                         android:text="@string/settings_bridge_toggle_label"
                         android:textSize="28sp"
                         android:showText="false" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/gnssReceiverTypeLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:enabled="false"
+                        android:hint="@string/settings_gnss_receiver_type_label"
+                        app:endIconMode="dropdown_menu"
+                        app:placeholderText="@string/settings_gnss_receiver_type_unknown">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/gnssReceiverTypeDropdown"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:enabled="false"
+                            android:inputType="none"
+                            android:importantForAutofill="no"
+                            android:completionThreshold="0"
+                            android:dropDownHeight="wrap_content"
+                            android:dropDownWidth="match_parent" />
+                    </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/gnssProfileLayout"

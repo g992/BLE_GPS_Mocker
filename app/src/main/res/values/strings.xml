@@ -59,6 +59,10 @@
     <string name="settings_gps_baud_unknown">—</string>
     <string name="settings_gps_baud_dialog_title">Изменение скорости GNSS</string>
     <string name="settings_gps_baud_dialog_message">Изменяется скорость работы устройства с GNSS модулем. Скорость связи устройства с подключённым девайсом остаётся постоянной. Продолжить?</string>
+    <string name="settings_gnss_receiver_type_label">Тип GNSS модуля / протокол</string>
+    <string name="settings_gnss_receiver_type_unknown">—</string>
+    <string name="settings_gnss_receiver_type_dialog_title">Переключение типа приёмника</string>
+    <string name="settings_gnss_receiver_type_dialog_message">Устройство переключится между u-blox (UBX) и generic NMEA режимом. Продолжить?</string>
     <string name="settings_gnss_profile_label">GNSS профиль (UBX)</string>
     <string name="settings_gnss_profile_unknown">—</string>
     <string name="settings_gnss_profile_dialog_title">Переключение GNSS профиля</string>
@@ -139,4 +143,42 @@
     <string name="always_moving_description">После получения координат модуль будет подмешивать небольшие сдвиги при простое более 3 секунд, чтобы навигаторы видели минимальное движение.</string>
     <string name="always_moving_dialog_title">Включить «Всегда в движении»</string>
     <string name="always_moving_dialog_message">Во время остановки будут имитироваться случайные перемещения вокруг текущей точки с минимальной скоростью 0.1 м/с, чтобы скрывать рекламу в навигаторах. Продолжить?</string>
+
+    <!-- Debug -->
+    <string name="menu_debug">отладка</string>
+    <string name="debug_title">Отладка</string>
+    <string name="debug_summary_title">GNSS срез</string>
+    <string name="debug_signals_title">Активные сигналы (дБ)</string>
+    <string name="debug_satellites_title">Спутники</string>
+    <string name="debug_raw_title">Сырой JSON</string>
+    <string name="debug_raw_placeholder">Данные ещё не получены</string>
+    <string name="debug_exit">Выйти</string>
+    <string name="debug_close">Закрыть</string>
+    <string name="debug_placeholder_value">—</string>
+    <string name="debug_no_signals">Нет активных сигналов</string>
+    <string name="debug_no_satellites">Нет данных по спутникам</string>
+    <string name="debug_visible_label">Видимых</string>
+    <string name="debug_active_label">В решении</string>
+    <string name="debug_uptime_label">Uptime, с</string>
+    <string name="debug_temp_label">Температура</string>
+    <string name="debug_satellite_header_id">ID</string>
+    <string name="debug_satellite_header_constellation">Созвездие</string>
+    <string name="debug_satellite_header_snr">SNR/уч.</string>
+    <string name="debug_satellite_header_angles">Эл/Аз</string>
+    <string name="debug_constellation_unknown">?</string>
+    <string name="debug_constellation_gps">GPS</string>
+    <string name="debug_constellation_glonass">ГЛОНАСС</string>
+    <string name="debug_constellation_galileo">Galileo</string>
+    <string name="debug_constellation_beidou">BeiDou</string>
+    <string name="debug_constellation_qzss">QZSS</string>
+    <string name="debug_active_suffix">активен</string>
+    <string name="debug_inactive_suffix">видим</string>
+    <string name="debug_angles_value">%1$d° / %2$d°</string>
+    <string name="debug_snr_value">%1$d дБ • %2$s</string>
+    <string name="debug_refreshed_at">Обновлено %1$tH:%1$tM:%1$tS</string>
+    <string name="debug_last_updated_placeholder">Обновлено: —</string>
+    <string name="debug_not_connected">Нет подключения к устройству</string>
+    <string name="debug_request_failed">Не удалось запросить отладочный срез</string>
+    <string name="debug_temp_value">%1$.1f°C</string>
+    <string name="debug_temp_unknown">н/д</string>
 </resources>

@@ -37,6 +37,7 @@ object BleUuids {
     val CHAR_GNSS_PROFILE_UUID: UUID = UUID.fromString("1fd95e59-993e-4bf5-a0b7-f481508c9a94")
     val CHAR_BASE_SETTINGS_PROFILE_UUID: UUID =
         UUID.fromString("7f0c9ad9-c6e8-4d2a-b3c1-1703708c6c2d")
+    val CHAR_GNSS_RECEIVER_TYPE_UUID: UUID = UUID.fromString("2ffc9c6e-34e2-4ad4-af74-9493f5276965")
     val CHAR_CUSTOM_GNSS_PROFILE_UUID: UUID =
         UUID.fromString("0abf4f57-12a2-47d9-9c61-96e0d47f332b")
     val CHAR_CUSTOM_BASE_SETTINGS_UUID: UUID =
@@ -49,6 +50,7 @@ object BleUuids {
     val CHAR_WIFI_STATUS_UUID: UUID = UUID.fromString("9b9a3f07-3a36-4c74-a48a-4ad0d68f1d39")
     val CHAR_DEVICE_VERSION_UUID: UUID = UUID.fromString("c4e6f890-6b5e-4f1b-9d2e-7a3c8d2f1b01")
     val CHAR_INPUT_VOLTAGE_UUID: UUID = UUID.fromString("81b2c6f8-cb9e-4069-9a2e-9e5abca5d56e")
+    val CHAR_GNSS_DEBUG_UUID: UUID = UUID.fromString("f877c02d-5a02-4cc7-a4f6-e4bb49519eb9")
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 }
 
@@ -77,6 +79,7 @@ interface BleConnectionDataListener {
     fun onBridgeModeChanged(enabled: Boolean)
     fun onGpsBaudRateChanged(baudRate: Int)
     fun onGnssProfileChanged(profile: Int)
+    fun onGnssReceiverTypeChanged(type: Int)
     fun onBaseSettingsProfileChanged(profile: Int)
     fun onCustomGnssProfileFrameChanged(frame: String)
     fun onCustomBaseSettingsFrameChanged(frame: String)
@@ -85,6 +88,7 @@ interface BleConnectionDataListener {
     fun onWifiStatusReceived(status: String, ip: String?)
     fun onDeviceVersionReceived(version: String)
     fun onInputVoltageReceived(voltage: Double)
+    fun onGnssDebugSnapshot(rawJson: String)
 }
 
 @SuppressLint("MissingPermission")
@@ -383,6 +387,14 @@ class ConnectionManager(
                         Log.w(tag, "Invalid GPS baud payload: $stringValue")
                     }
                 }
+                BleUuids.CHAR_GNSS_RECEIVER_TYPE_UUID -> {
+                    val type = stringValue.toIntOrNull()
+                    if (type != null) {
+                        connectionListener?.onGnssReceiverTypeChanged(type)
+                    } else {
+                        Log.w(tag, "Invalid GNSS receiver type payload: $stringValue")
+                    }
+                }
                 BleUuids.CHAR_GNSS_PROFILE_UUID -> {
                     val profile = stringValue.toIntOrNull()
                     if (profile != null) {
@@ -414,6 +426,7 @@ class ConnectionManager(
                     connectionListener?.onDeviceVersionReceived(stringValue)
                 }
                 BleUuids.CHAR_INPUT_VOLTAGE_UUID -> handleInputVoltagePayload(stringValue)
+                BleUuids.CHAR_GNSS_DEBUG_UUID -> connectionListener?.onGnssDebugSnapshot(stringValue)
                 else -> Log.d(tag, "No specific parsing for UUID $uuid")
             }
         } catch (exception: Exception) {
@@ -569,23 +582,24 @@ class ConnectionManager(
         gatt: BluetoothGatt,
         service: android.bluetooth.BluetoothGattService,
         characteristicUuid: UUID
-    ) {
+    ): Boolean {
         val characteristic = service.getCharacteristic(characteristicUuid)
         if (characteristic == null) {
             Log.e(tag, "Characteristic $characteristicUuid not found for read")
-            return
+            return false
         }
         if (!hasConnectPermission()) {
             connectionListener?.onError(
                 "Missing BLUETOOTH_CONNECT permission to read characteristic"
             )
-            return
+            return false
         }
         if (!gatt.readCharacteristic(characteristic)) {
             Log.w(tag, "Failed to initiate read for characteristic $characteristicUuid")
-        } else {
-            Log.i(tag, "Requested read for characteristic $characteristicUuid")
+            return false
         }
+        Log.i(tag, "Requested read for characteristic $characteristicUuid")
+        return true
     }
 
     fun readCharacteristic(uuid: UUID): Boolean {
@@ -597,8 +611,7 @@ class ConnectionManager(
             Log.w(tag, "readCharacteristic($uuid) skipped: service unavailable")
             return false
         }
-        readCharacteristicInternal(gatt, service, uuid)
-        return true
+        return readCharacteristicInternal(gatt, service, uuid)
     }
 
     fun writeCharacteristic(uuid: UUID, payload: String): Boolean {
@@ -891,8 +904,7 @@ class ConnectionManager(
             connectionListener?.onError("Missing BLUETOOTH_CONNECT permission to poll telemetry")
             return false
         }
-        readCharacteristicInternal(gatt, service, BleUuids.CHAR_STATUS_UUID)
-        return true
+        return readCharacteristicInternal(gatt, service, BleUuids.CHAR_STATUS_UUID)
     }
 
     @Synchronized

@@ -48,6 +48,11 @@ private const val IDLE_DRIFT_INTERVAL_MS = 3_000L
 private const val MIN_DRIFT_SPEED_MPS = 0.1
 private const val MIN_DRIFT_RADIUS_METERS = 0.3
 private const val WIFI_STATUS_POLL_INTERVAL_MS = 5_000L
+private val GNSS_RECEIVER_TYPE_VALUES = setOf(0, 1)
+private const val TELEMETRY_POLL_MIN_INTERVAL_MS = 2_000L
+private const val TELEMETRY_STALE_THRESHOLD_MS = 5_000L
+private const val GNSS_DEBUG_READ_RETRY_MAX = 3
+private const val GNSS_DEBUG_READ_RETRY_DELAY_MS = 300L
 
 data class OtaPortalState(
     val enabled: Boolean = false,
@@ -91,19 +96,24 @@ class GNSSClientService :
 
     private var hdop: Double? = null
     private var signalLevels: String? = null
+    private var lastSignalLevelsTimestamp: Long = 0L
+    private var lastTelemetryPollTimestamp: Long = 0L
     private var altitudeMeters: Double? = null
     private var speedMetersPerSecond: Double? = null
     private var headingDegrees: Double? = null
-    private var ttffSeconds: Long? = null
-    private var apControlEnabled: Boolean? = null
-    private var bridgeModeEnabled: Boolean? = null
-    private var gpsBaudRate: Int? = null
+private var ttffSeconds: Long? = null
+private var apControlEnabled: Boolean? = null
+private var bridgeModeEnabled: Boolean? = null
+private var gpsBaudRate: Int? = null
+private var gnssReceiverType: Int? = null
     private var gnssProfile: Int? = null
     private var baseSettingsProfile: Int? = null
     private var customGnssProfileFrame: String? = null
-    private var customBaseSettingsFrame: String? = null
-    private var deviceVersion: String? = null
-    private var inputVoltage: Double? = null
+private var customBaseSettingsFrame: String? = null
+private var deviceVersion: String? = null
+private var inputVoltage: Double? = null
+private var lastGnssDebugRaw: String? = null
+private var lastGnssDebugTimestamp: Long = 0L
     private var otaPortalState = OtaPortalState()
     private var otaGuardPending = false
     private var alwaysMovingEnabled = false
@@ -188,6 +198,8 @@ class GNSSClientService :
 
     fun getGpsBaudRate(): Int? = gpsBaudRate
 
+    fun getGnssReceiverType(): Int? = gnssReceiverType
+
     fun getGnssProfile(): Int? = gnssProfile
 
     fun getBaseSettingsProfile(): Int? = baseSettingsProfile
@@ -199,6 +211,36 @@ class GNSSClientService :
     fun getDeviceVersion(): String? = deviceVersion
 
     fun getInputVoltage(): Double? = inputVoltage
+
+    fun getLastGnssDebugSnapshot(): String? = lastGnssDebugRaw
+
+    fun emitGnssDebugSnapshot() {
+        lastGnssDebugRaw?.let { broadcastGnssDebug(it, lastGnssDebugTimestamp) }
+    }
+
+    fun requestGnssDebugSnapshot(attempt: Int = 0): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "requestGnssDebugSnapshot skipped: not connected")
+            broadcastGnssDebug(null, 0L)
+            return false
+        }
+        val manager = connectionManager ?: return false
+        val enqueued = manager.readCharacteristic(BleUuids.CHAR_GNSS_DEBUG_UUID)
+        if (enqueued) {
+            Log.d(TAG, "Requested GNSS debug snapshot (attempt ${attempt + 1})")
+            return true
+        }
+        if (attempt + 1 < GNSS_DEBUG_READ_RETRY_MAX) {
+            handler.postDelayed(
+                { requestGnssDebugSnapshot(attempt + 1) },
+                GNSS_DEBUG_READ_RETRY_DELAY_MS
+            )
+            return true
+        }
+        Log.w(TAG, "GNSS debug snapshot read failed after ${attempt + 1} attempts")
+        broadcastGnssDebug(null, 0L)
+        return false
+    }
 
     fun setAlwaysMovingEnabled(enabled: Boolean) {
         alwaysMovingEnabled = enabled
@@ -241,6 +283,22 @@ class GNSSClientService :
         val payload = sanitized.toString()
         return connectionManager?.writeCharacteristic(BleUuids.CHAR_GPS_BAUD_UUID, payload)
             ?: false
+    }
+
+    fun requestGnssReceiverTypeChange(type: Int): Boolean {
+        if (!isConnected) {
+            Log.w(TAG, "requestGnssReceiverTypeChange skipped: not connected")
+            return false
+        }
+        if (!GNSS_RECEIVER_TYPE_VALUES.contains(type)) {
+            Log.w(TAG, "requestGnssReceiverTypeChange skipped: unsupported type $type")
+            return false
+        }
+        val payload = type.toString()
+        return connectionManager?.writeCharacteristic(
+            BleUuids.CHAR_GNSS_RECEIVER_TYPE_UUID,
+            payload
+        ) ?: false
     }
 
     fun requestGnssProfileChange(profile: Int): Boolean {
@@ -754,11 +812,21 @@ class GNSSClientService :
         sendBroadcast(intent)
     }
 
+    private fun broadcastGnssDebug(raw: String?, timestamp: Long) {
+        val intent =
+            Intent(ACTION_GNSS_DEBUG_SNAPSHOT).apply {
+                putExtra(EXTRA_GNSS_DEBUG_RAW, raw)
+                putExtra(EXTRA_GNSS_DEBUG_TIMESTAMP, timestamp)
+            }
+        sendBroadcast(intent)
+    }
+
     private fun broadcastDeviceSettings() {
         val intent = Intent(ACTION_DEVICE_SETTINGS_CHANGED)
         intent.putExtra(EXTRA_AP_CONTROL_KNOWN, apControlEnabled != null)
         intent.putExtra(EXTRA_BRIDGE_MODE_KNOWN, bridgeModeEnabled != null)
         intent.putExtra(EXTRA_GPS_BAUD_KNOWN, gpsBaudRate != null)
+        intent.putExtra(EXTRA_GNSS_RECEIVER_TYPE_KNOWN, gnssReceiverType != null)
         intent.putExtra(EXTRA_GNSS_PROFILE_KNOWN, gnssProfile != null)
         intent.putExtra(EXTRA_BASE_SETTINGS_PROFILE_KNOWN, baseSettingsProfile != null)
         intent.putExtra(EXTRA_CUSTOM_GNSS_PROFILE_KNOWN, customGnssProfileFrame != null)
@@ -768,6 +836,7 @@ class GNSSClientService :
         apControlEnabled?.let { intent.putExtra(EXTRA_AP_CONTROL_ENABLED, it) }
         bridgeModeEnabled?.let { intent.putExtra(EXTRA_BRIDGE_MODE_ENABLED, it) }
         gpsBaudRate?.let { intent.putExtra(EXTRA_GPS_BAUD_RATE, it) }
+        gnssReceiverType?.let { intent.putExtra(EXTRA_GNSS_RECEIVER_TYPE, it) }
         gnssProfile?.let { intent.putExtra(EXTRA_GNSS_PROFILE, it) }
         baseSettingsProfile?.let { intent.putExtra(EXTRA_BASE_SETTINGS_PROFILE, it) }
         customGnssProfileFrame?.let { intent.putExtra(EXTRA_CUSTOM_GNSS_PROFILE_FRAME, it) }
@@ -803,6 +872,10 @@ class GNSSClientService :
         handler.postDelayed(
             { readDeviceSetting(BleUuids.CHAR_MODE_CONTROL_UUID) },
             200
+        )
+        handler.postDelayed(
+            { readDeviceSetting(BleUuids.CHAR_GNSS_RECEIVER_TYPE_UUID) },
+            300
         )
         handler.postDelayed(
             { readDeviceSetting(BleUuids.CHAR_GPS_BAUD_UUID) },
@@ -896,6 +969,32 @@ class GNSSClientService :
 
     private fun stopWifiStatusPolling() {
         handler.removeCallbacks(wifiStatusPollRunnable)
+    }
+
+    private fun requestTelemetryUpdate(force: Boolean = false) {
+        if (!isConnected) {
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (!force && now - lastTelemetryPollTimestamp < TELEMETRY_POLL_MIN_INTERVAL_MS) {
+            return
+        }
+        val requested = connectionManager?.pollTelemetry() ?: false
+        if (requested) {
+            lastTelemetryPollTimestamp = now
+        } else if (force) {
+            Log.d(TAG, "Telemetry poll skipped: service unavailable")
+        }
+    }
+
+    private fun maybeRequestTelemetryRefresh() {
+        val now = System.currentTimeMillis()
+        val signalsKnown = !signalLevels.isNullOrBlank()
+        val staleSignals =
+            signalsKnown && now - lastSignalLevelsTimestamp > TELEMETRY_STALE_THRESHOLD_MS
+        if (!signalsKnown || staleSignals) {
+            requestTelemetryUpdate()
+        }
     }
 
     private fun updateOtaPortalState(
@@ -1025,6 +1124,10 @@ class GNSSClientService :
         hasReceivedModuleFix = false
         lastRealUpdateTimestamp = 0L
         lastRealLocation = null
+        signalLevels = null
+        lastSignalLevelsTimestamp = 0L
+        lastTelemetryPollTimestamp = 0L
+        gnssReceiverType = null
         apControlEnabled = null
         bridgeModeEnabled = null
         gpsBaudRate = null
@@ -1034,6 +1137,8 @@ class GNSSClientService :
         customBaseSettingsFrame = null
         deviceVersion = null
         inputVoltage = null
+        lastGnssDebugRaw = null
+        lastGnssDebugTimestamp = 0L
         broadcastDeviceSettings()
         updateNotification()
         if (AppPrefs.isMockEnabled(this)) {
@@ -1045,6 +1150,7 @@ class GNSSClientService :
         Log.d(TAG, "Services discovered on ${device.address}")
         connectionManager?.startKeepAlive()
         requestDeviceSettingsRead()
+        requestTelemetryUpdate(force = true)
         refreshOtaPortalState()
         startWifiStatusPolling(immediate = true)
     }
@@ -1065,6 +1171,7 @@ class GNSSClientService :
             TAG,
             "BLE coordinates lat=$latitude lon=$longitude deltaMillis=${deltaMillis ?: "n/a"}"
         )
+        maybeRequestTelemetryRefresh()
         handler.removeCallbacks(idleMovementRunnable)
         val location = handleLocationUpdate(latitude, longitude, synthetic = false)
         if (location != null) {
@@ -1085,6 +1192,7 @@ class GNSSClientService :
 
     override fun onSignalLevelsReceived(levels: String) {
         signalLevels = levels
+        lastSignalLevelsTimestamp = System.currentTimeMillis()
     }
 
     override fun onAltitudeReceived(altitudeMeters: Double) {
@@ -1130,6 +1238,22 @@ class GNSSClientService :
                 Log.w(TAG, "GPS baud rate updated with out-of-range value $baudRate, using $sanitized")
             } else {
                 Log.i(TAG, "GPS baud rate updated to $sanitized")
+            }
+            broadcastDeviceSettings()
+        } else if (previous == null) {
+            broadcastDeviceSettings()
+        }
+    }
+
+    override fun onGnssReceiverTypeChanged(type: Int) {
+        val previous = gnssReceiverType
+        val supported = GNSS_RECEIVER_TYPE_VALUES.contains(type)
+        gnssReceiverType = type
+        if (previous != gnssReceiverType) {
+            if (!supported) {
+                Log.w(TAG, "GNSS receiver type $type not in supported set")
+            } else {
+                Log.i(TAG, "GNSS receiver type updated to $type")
             }
             broadcastDeviceSettings()
         } else if (previous == null) {
@@ -1214,6 +1338,12 @@ class GNSSClientService :
         broadcastDeviceSettings()
     }
 
+    override fun onGnssDebugSnapshot(rawJson: String) {
+        lastGnssDebugRaw = rawJson
+        lastGnssDebugTimestamp = System.currentTimeMillis()
+        broadcastGnssDebug(rawJson, lastGnssDebugTimestamp)
+    }
+
     override fun onTtffReceived(ttffSeconds: Long) {
         this.ttffSeconds = ttffSeconds
     }
@@ -1228,6 +1358,8 @@ class GNSSClientService :
             "com.g992.blegpsmocker.MOCK_LOCATION_STATUS"
         const val ACTION_DEVICE_SETTINGS_CHANGED =
             "com.g992.blegpsmocker.DEVICE_SETTINGS_CHANGED"
+        const val ACTION_GNSS_DEBUG_SNAPSHOT =
+            "com.g992.blegpsmocker.GNSS_DEBUG_SNAPSHOT"
 
         const val EXTRA_CONNECTED = "connected"
         const val EXTRA_LOCATION = "location"
@@ -1245,6 +1377,8 @@ class GNSSClientService :
         const val EXTRA_BRIDGE_MODE_KNOWN = "bridge_mode_known"
         const val EXTRA_GPS_BAUD_RATE = "gps_baud_rate"
         const val EXTRA_GPS_BAUD_KNOWN = "gps_baud_known"
+        const val EXTRA_GNSS_RECEIVER_TYPE = "gnss_receiver_type"
+        const val EXTRA_GNSS_RECEIVER_TYPE_KNOWN = "gnss_receiver_type_known"
         const val EXTRA_GNSS_PROFILE = "gnss_profile"
         const val EXTRA_GNSS_PROFILE_KNOWN = "gnss_profile_known"
         const val EXTRA_BASE_SETTINGS_PROFILE = "base_settings_profile"
@@ -1265,6 +1399,8 @@ class GNSSClientService :
         const val EXTRA_OTA_WIFI_IP = "ota_wifi_ip"
         const val EXTRA_OTA_PORTAL_URL = "ota_portal_url"
         const val EXTRA_OTA_PORTAL_FALLBACK = "ota_portal_fallback"
+        const val EXTRA_GNSS_DEBUG_RAW = "gnss_debug_raw"
+        const val EXTRA_GNSS_DEBUG_TIMESTAMP = "gnss_debug_timestamp"
 
         private val providerCandidates = listOf(LocationManager.GPS_PROVIDER)
 
